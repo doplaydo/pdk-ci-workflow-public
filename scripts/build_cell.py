@@ -8,7 +8,7 @@ and would cause cellname collisions), and cells that require positional
 arguments are skipped automatically.
 """
 
-import importlib
+import importlib.util
 import inspect
 import sys
 from pathlib import Path
@@ -67,12 +67,16 @@ else:
             break
 
     if cell_func is None:
-        # Cell not auto-discovered (e.g. nested in a samples/ subpackage).
+        # Cell not auto-discovered (e.g. nested in a samples/ subpackage or a
+        # directory with hyphens that aren't valid Python identifiers).
         for py_file in sorted(Path(".").rglob(f"{cell_name}.py")):
-            module_path = ".".join(py_file.with_suffix("").parts)
+            spec = importlib.util.spec_from_file_location(cell_name, py_file)
+            if spec is None or spec.loader is None:
+                continue
             try:
-                mod = importlib.import_module(module_path)
-            except ImportError:
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+            except Exception:  # noqa: BLE001
                 continue
             for candidate_name in candidate_names:
                 cell_func = getattr(mod, candidate_name, None)
