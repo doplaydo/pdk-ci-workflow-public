@@ -111,12 +111,24 @@ jobs:
         run: uv run --no-project --with gdsfactoryplus gfp configure --api-key ${{ secrets.GFP_API_KEY }} --uv
       - name: Install dependencies
         run: uv sync --all-extras
+      - name: Check for DRC cell
+        id: drc_check
+        run: |
+          if find . -name 'sample_drc_errors.py' -not -path '*/.venv/*' | grep -q .; then
+            echo "has_drc=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No sample_drc_errors.py found — skipping DRC"
+            echo "has_drc=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Download build_cell script
+        if: steps.drc_check.outputs.has_drc == 'true'
         working-directory: ${{ github.workspace }}
         run: curl -fsSL https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow/main/scripts/build_cell.py -o build_cell.py
       - name: Build sample_drc_errors cell
+        if: steps.drc_check.outputs.has_drc == 'true'
         run: uv run python "$GITHUB_WORKSPACE/build_cell.py" sample_drc_errors
       - name: Run DRC
+        if: steps.drc_check.outputs.has_drc == 'true'
         continue-on-error: true
         run: |
           mkdir -p build/lyrdb
@@ -145,17 +157,17 @@ jobs:
           done
           echo "Final DRC exit code: ${drc_exit}"
       - id: slug
-        if: always()
+        if: always() && steps.drc_check.outputs.has_drc == 'true'
         run: echo "name=drc-$(echo '${{ matrix.project-dir }}' | tr '/' '-')" >> "$GITHUB_OUTPUT"
       - name: Upload DRC report
-        if: always()
+        if: always() && steps.drc_check.outputs.has_drc == 'true'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: ${{ steps.slug.outputs.name }}
           path: ${{ matrix.project-dir }}/build/lyrdb/
           retention-days: 3
       - name: Verify DRC errors found
-        if: always()
+        if: always() && steps.drc_check.outputs.has_drc == 'true'
         run: |
           if [ ! -f build/lyrdb/sample_drc_errors.lyrdb ]; then
             echo "::error::DRC output not found — gfp check drc likely failed"
