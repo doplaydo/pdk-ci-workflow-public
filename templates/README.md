@@ -18,6 +18,7 @@ Minimal wrappers — each just calls the upstream reusable workflow with `secret
 | `.github/workflows/model_coverage.yml` | PDK model-to-cell coverage check |
 | `.github/workflows/model_regression.yml` | Model-specific regression tests |
 | `.github/workflows/update_badges.yml` | Generate coverage, model, issue, and PR badges |
+| `.github/workflows/code-security.yml` | SAST (Semgrep) and SCA (Trivy) security scans |
 
 ## Pre-commit Config
 

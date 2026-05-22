@@ -208,6 +208,7 @@ Reference configuration files are provided in `templates/` for onboarding new PD
 | `.github/workflows/model_coverage.yml` | PDK model-to-cell coverage check |
 | `.github/workflows/model_regression.yml` | Model-specific regression tests |
 | `.github/workflows/update_badges.yml` | Generate coverage, model, issue, and PR badges |
+| `.github/workflows/code-security.yml` | SAST (Semgrep) and SCA (Trivy) security scans |
 | `.github/dependabot.yml` | Monthly pip and github-actions dependency updates |
 | `.github/release-drafter.yml` | Release note template with semantic versioning categories |
 
