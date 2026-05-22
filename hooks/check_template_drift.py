@@ -31,6 +31,7 @@ TEMPLATES: list[str] = [
     ".github/workflows/test_code.yml",
     ".github/workflows/test_coverage.yml",
     ".github/workflows/update_badges.yml",
+    ".github/workflows/code-security.yml",
 ]
 
 # Files previously shipped as templates that are now fetched at runtime by
