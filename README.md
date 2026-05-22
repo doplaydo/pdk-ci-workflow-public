@@ -109,6 +109,7 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 | Workflow | Jobs | Description |
 |----------|------|-------------|
 | `test_code.yml` | pre-commit, test_code, test_gfp | Pre-commit (canonical config), pytest, GFP validation |
+| `test-sample-projects.yml` | discover, test, notebooks, drc | Unit tests, notebook execution, and DRC for all `*--sample-projects/` directories |
 | `pages.yml` | build-docs, deploy-docs | Sphinx docs build and GitHub Pages deployment |
 | `claude-pr-review.yml` | review | AI code review via Claude Sonnet 4. Runs once on PR open/reopen; re-run on demand by commenting `/claude-api review` |
 | `release-drafter.yml` | update_release_draft | Auto-drafted release notes with Claude-curated changelog |
@@ -136,7 +137,7 @@ PDK repos should have these secrets configured (passed automatically via `secret
 
 | Secret | Used by |
 |--------|---------|
-| `GFP_API_KEY` | test_code, pages, drc, test_coverage, model_coverage, model_regression, update_badges |
+| `GFP_API_KEY` | test_code, test-sample-projects, pages, drc, test_coverage, model_coverage, model_regression, update_badges |
 | `ANTHROPIC_API_KEY` | claude-pr-review, release-drafter (changelog curation) |
 | `SIMCLOUD_APIKEY` | pages |
 | `GITHUB_TOKEN` | release-drafter, issue, update_badges (automatic) |
@@ -181,7 +182,7 @@ See [`hooks/README.md`](hooks/README.md) for detailed documentation.
 | `check-makefile-targets` | Required targets (install, test) and recommended targets (docs, build, test-force, update-pre, dev) |
 | `check-workflows` | `.github/workflows/` has test_code.yml with pre-commit and test jobs |
 | `check-precommit-config` | `.pre-commit-config.yaml` includes required hooks (trailing-whitespace, end-of-file-fixer, ruff or ruff-lint, ruff-format) |
-| `check-template-drift` | `.github/dependabot.yml`, `.github/release-drafter.yml`, and `.github/workflows/*.yml` thin callers match upstream templates. Auto-fixes drift. |
+| `check-template-drift` | `.github/dependabot.yml`, `.github/release-drafter.yml`, and `.github/workflows/*.yml` thin callers match upstream templates. Auto-fixes by rewriting or creating files. Conditionally deploys `sample-projects.yml` in repos containing `*--sample-projects/` directories. |
 
 #### Multi-band
 
@@ -199,6 +200,7 @@ Reference configuration files are provided in `templates/` for onboarding new PD
 |----------|---------|
 | `.pre-commit-config.yaml` | Canonical pre-commit config (PDK hooks + third-party tools with centralized versions) |
 | `.github/workflows/test_code.yml` | Pre-commit, pytest, and GFP validation |
+| `.github/workflows/sample-projects.yml` | Unit tests, notebooks, and DRC for `*--sample-projects/` directories (auto-deployed by `check-template-drift` when sample dirs are present) |
 | `.github/workflows/pages.yml` | Sphinx docs build and GitHub Pages deployment |
 | `.github/workflows/claude-pr-review.yml` | AI code review via Claude — runs once on PR open/reopen; re-run on demand with `/claude-api review` comment |
 | `.github/workflows/release-drafter.yml` | Semantic versioning and Claude-curated release notes |
