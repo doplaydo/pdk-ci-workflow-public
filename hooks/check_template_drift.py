@@ -10,6 +10,7 @@ Files to enforce are listed in TEMPLATES.
 from __future__ import annotations
 
 import difflib
+import os
 import sys
 from importlib.resources import files
 from pathlib import Path
@@ -32,7 +33,13 @@ TEMPLATES: list[str] = [
     ".github/workflows/test_coverage.yml",
     ".github/workflows/update_badges.yml",
     ".github/workflows/code-security.yml",
+    "AGENTS.md",
 ]
+
+# Local path → symlink target. Enforced as symlinks, not file content.
+SYMLINKS: dict[str, str] = {
+    "CLAUDE.md": "AGENTS.md",
+}
 
 # Files previously shipped as templates that are now fetched at runtime by
 # reusable workflows.  If they still exist in a PDK repo the hook deletes them
@@ -100,6 +107,16 @@ def _enforce_template(rel: str, root, result: CheckResult) -> None:
     result.error(f"rewrote {rel} from upstream template")
 
 
+def _enforce_symlink(path: str, target: str, result: CheckResult) -> None:
+    local = Path(path)
+    if local.is_symlink() and os.readlink(local) == target:
+        return
+    if local.exists() or local.is_symlink():
+        local.unlink()
+    local.symlink_to(target)
+    result.error(f"fixed {path} → {target} symlink")
+
+
 def main() -> int:
     result = CheckResult("check-template-drift")
 
@@ -121,6 +138,9 @@ def main() -> int:
         if local.exists():
             local.unlink()
             result.error(f"deleted deprecated template {rel} (now fetched by CI)")
+
+    for path, target in SYMLINKS.items():
+        _enforce_symlink(path, target, result)
 
     return result.report()
 
