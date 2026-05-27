@@ -21,12 +21,10 @@ jobs:
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           python-version: "3.12"
-      - name: Configure gfp
-        run: uv run --no-project --with gdsfactoryplus gfp configure --api-key ${{ secrets.GFP_API_KEY }} --uv
       - name: Install dependencies
-        run: uv sync --all-extras
-      - name: Upgrade gdsfactoryplus
-        run: uv pip install --upgrade gdsfactoryplus
+        run: uv sync --all-extras -P gdsfactoryplus
+      - name: Configure gfp
+        run: uv run gfp configure --api-key ${{ secrets.GFP_API_KEY }} --uv
       - name: Download build_cell script
         run: curl -fsSL https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow/main/scripts/build_cell.py -o build_cell.py
       - name: Build cell
