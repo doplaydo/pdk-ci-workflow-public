@@ -30,7 +30,7 @@ check_version_sync = "hooks.check_version_sync:main"
 check_workflows = "hooks.check_workflows:main"
 
 [tool.setuptools.package-data]
-"templates" = [".github/**/*", "AGENTS.md"]
+"templates" = [".github/**/*", "AGENTS.md", "CLAUDE.md"]
 
 [tool.setuptools.packages.find]
 include = ["hooks*", "templates*"]
