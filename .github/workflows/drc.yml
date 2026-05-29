@@ -70,7 +70,7 @@ jobs:
             </g>
           </svg>
           SVGEOF
-          sed -i "s/PLACEHOLDER/$errors/g; s/COLORPLACEHOLDER/$color/g" badges/drc.svg
+          sed -i "s/COLORPLACEHOLDER/$color/g; s/PLACEHOLDER/$errors/g" badges/drc.svg
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
