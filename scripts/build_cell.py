@@ -23,7 +23,7 @@ pdk = get_pdk()
 if cell_name == "all_cells":
     import gdsfactory as gf
 
-    c = gf.Component("all_cells")
+    components = []
     for name, func in sorted(pdk.cells.items()):
         # Skip cells from installed packages (not PDK-owned)
         try:
@@ -53,9 +53,15 @@ if cell_name == "all_cells":
             continue
 
         try:
-            c.add_ref(func())
+            components.append(func())
         except Exception as e:  # noqa: BLE001
             print(f"Error instantiating cell {name}: {e}")
+
+    if components:
+        c = gf.pack(components, spacing=100)[0]
+        c.name = "all_cells"
+    else:
+        c = gf.Component("all_cells")
 
     try:
         c.write_gds(f"build/gds/{cell_name}.gds")
