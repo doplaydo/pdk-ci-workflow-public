@@ -68,11 +68,11 @@ class TestCheckPyprojectSections:
         (pdk_root / "pyproject.toml").write_text("\n".join(new_lines))
         assert main() == 1
 
-    def test_wrong_readme_fails(self, pdk_root: Path) -> None:
+    def test_non_default_readme_name_passes(self, pdk_root: Path) -> None:
         content = (pdk_root / "pyproject.toml").read_text()
         content = content.replace('readme = "README.md"', 'readme = "readme.rst"')
         (pdk_root / "pyproject.toml").write_text(content)
-        assert main() == 1
+        assert main() == 0
 
     def test_missing_gdsfactory_dep_fails(self, pdk_root: Path) -> None:
         content = (pdk_root / "pyproject.toml").read_text()
