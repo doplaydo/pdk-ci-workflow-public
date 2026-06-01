@@ -3,11 +3,12 @@
 When cell_name is "all_cells", builds every PDK-owned cell that can be
 instantiated with default arguments and packs them into a single GDS.
 Cells from installed packages (site-packages / .venv), cells located
-under a ``samples/`` directory (demo/tapeout cells that re-use BB cells
+under a ``samples/`` directory (demo/tapeout cells that reuse BB cells
 and would cause cellname collisions), and cells that require positional
 arguments are skipped automatically.
 """
 
+import importlib.util
 import inspect
 import sys
 from pathlib import Path
@@ -32,7 +33,7 @@ if cell_name == "all_cells":
         if ".venv" in src or "site-packages" in src:
             continue
 
-        # Skip demo/tapeout cells under a samples/ directory: they re-use BB
+        # Skip demo/tapeout cells under a samples/ directory: they reuse BB
         # cells already registered as top-level PDK cells, which would cause
         # cellname collisions when packed together.
         if "/samples/" in src or src.endswith("/samples"):
@@ -55,7 +56,50 @@ if cell_name == "all_cells":
             c.add_ref(func())
         except Exception as e:  # noqa: BLE001
             print(f"Error instantiating cell {name}: {e}")
-    c.write_gds(f"build/gds/{cell_name}.gds")
+
+    try:
+        c.write_gds(f"build/gds/{cell_name}.gds")
+    except RuntimeError as e:
+        # This string is raised by kfactory's `KCell.write` path in
+        # `src/kfactory/kcell.py`, where it delegates to
+        # `self._base.kdb_cell.write(...)` for the actual save.
+        if "more than one cell" not in str(e):
+            raise
+        print(f"Warning: {e}")
+        print("Flattening to resolve duplicate subcell names...")
+        c.flatten()
+        c.write_gds(f"build/gds/{cell_name}.gds")
 else:
-    c = pdk.cells[cell_name]()
+    candidate_names = [cell_name, f"_{cell_name}"]
+    cell_func = None
+
+    for candidate_name in candidate_names:
+        cell_func = pdk.cells.get(candidate_name)
+        if cell_func:
+            break
+
+    if cell_func is None:
+        # Cell not auto-discovered (e.g. nested in a samples/ subpackage or a
+        # directory with hyphens that aren't valid Python identifiers).
+        for py_file in sorted(Path(".").rglob(f"{cell_name}.py")):
+            spec = importlib.util.spec_from_file_location(cell_name, py_file)
+            if spec is None or spec.loader is None:
+                continue
+            try:
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+            except Exception:  # noqa: BLE001
+                continue
+            for candidate_name in candidate_names:
+                cell_func = getattr(mod, candidate_name, None)
+                if cell_func:
+                    break
+            if cell_func:
+                break
+
+    if cell_func is None:
+        print(f"Error: cell '{cell_name}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    c = cell_func()
     c.write_gds(f"build/gds/{cell_name}.gds")

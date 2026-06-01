@@ -9,6 +9,7 @@ Minimal wrappers — each just calls the upstream reusable workflow with `secret
 | File | Purpose |
 |------|---------|
 | `.github/workflows/test_code.yml` | Pre-commit, pytest, GFP validation |
+| `.github/workflows/sample-projects.yml` | Unit tests, notebooks, and DRC for `*--sample-projects/` directories — deployed automatically by `check-template-drift` |
 | `.github/workflows/pages.yml` | Sphinx docs build + GitHub Pages |
 | `.github/workflows/claude-pr-review.yml` | AI code review via Claude — runs once on PR open/reopen; re-run on demand with `/claude-api review` comment |
 | `.github/workflows/release-drafter.yml` | Semantic versioning + Claude-curated release notes |
@@ -18,6 +19,7 @@ Minimal wrappers — each just calls the upstream reusable workflow with `secret
 | `.github/workflows/model_coverage.yml` | PDK model-to-cell coverage check |
 | `.github/workflows/model_regression.yml` | Model-specific regression tests |
 | `.github/workflows/update_badges.yml` | Generate coverage, model, issue, and PR badges |
+| `.github/workflows/code-security.yml` | SAST (Semgrep) and SCA (Trivy) security scans |
 
 ## Pre-commit Config
 

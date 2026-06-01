@@ -23,7 +23,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Curate release notes with Claude
-        if: steps.drafter.outputs.body != '' && (secrets.ANTHROPIC_API_KEY != '')
+        if: steps.drafter.outputs.body != '' && env.ANTHROPIC_API_KEY != ''
         run: |
           npm install -g @anthropic-ai/claude-code
 
@@ -37,7 +37,7 @@ jobs:
           - Output ONLY the rewritten markdown, nothing else.
 
           Raw release notes:
-          \$DRAFT_BODY")
+          $DRAFT_BODY")
 
           if [ -n "$curated" ]; then
             gh release edit "$TAG_NAME" --notes "$curated"

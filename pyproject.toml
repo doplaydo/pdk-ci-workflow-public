@@ -1,30 +1,33 @@
-[project]
-name = "ci-pdk-workflows"
-version = "0.1.0"
-description = "Centralised pre-commit hooks and CI standards"
-requires-python = ">=3.9"
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools>=68.0"]
 
+[project]
 dependencies = [
-    "tomli>=1.1.0; python_version < '3.11'",
-    "pyyaml>=6.0",
+  "tomli>=1.1.0; python_version < '3.11'",
+  "pyyaml>=6.0"
 ]
+description = "Centralised pre-commit hooks and CI standards"
+name = "ci-pdk-workflows"
+requires-python = ">=3.9"
+version = "0.1.0"
 
 [project.scripts]
-check_required_files = "hooks.check_required_files:main"
-check_pyproject_sections = "hooks.check_pyproject_sections:main"
-check_package_init = "hooks.check_package_init:main"
 check_cells_structure = "hooks.check_cells_structure:main"
-check_tech_structure = "hooks.check_tech_structure:main"
-check_pdk_object = "hooks.check_pdk_object:main"
-check_test_structure = "hooks.check_test_structure:main"
 check_makefile_targets = "hooks.check_makefile_targets:main"
-check_workflows = "hooks.check_workflows:main"
 check_multi_band = "hooks.check_multi_band:main"
-check_no_raw_layers = "hooks.check_no_raw_layers:main"
 check_no_main_in_cells = "hooks.check_no_main_in_cells:main"
+check_no_raw_layers = "hooks.check_no_raw_layers:main"
+check_package_init = "hooks.check_package_init:main"
+check_pdk_object = "hooks.check_pdk_object:main"
 check_precommit_config = "hooks.check_precommit_config:main"
-check_version_sync = "hooks.check_version_sync:main"
+check_pyproject_sections = "hooks.check_pyproject_sections:main"
+check_required_files = "hooks.check_required_files:main"
+check_tech_structure = "hooks.check_tech_structure:main"
 check_template_drift = "hooks.check_template_drift:main"
+check_test_structure = "hooks.check_test_structure:main"
+check_version_sync = "hooks.check_version_sync:main"
+check_workflows = "hooks.check_workflows:main"
 
 [dependency-groups]
 dev = [
@@ -35,9 +38,10 @@ dev = [
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
+[tool.setuptools.package-data]
+"templates" = [".github/**/*", "AGENTS.md", "CLAUDE.md"]
 
 [tool.setuptools.packages.find]
-where = ["."]
 include = ["hooks*", "templates*"]
 exclude = [".github*", "tests*", "scripts*"]
 
@@ -46,3 +50,4 @@ exclude = [".github*", "tests*", "scripts*"]
 
 [tool.setuptools.exclude-package-data]
 "templates" = [".github/workflows/test_hooks.yml"]
+where = ["."]
