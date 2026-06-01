@@ -39,6 +39,8 @@ def check_project_fields(data: dict[str, Any], result: CheckResult) -> None:
     readme = proj.get("readme")
     if readme is None:
         result.error("[project].readme missing")
+    elif readme != "README.md":
+        result.error('[project].readme must be "README.md"')
 
     # authors
     authors = proj.get("authors")

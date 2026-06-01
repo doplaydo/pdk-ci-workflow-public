@@ -35,19 +35,13 @@ dev = [
     "hypothesis>=6.0",
 ]
 
-[build-system]
-requires = ["setuptools>=68.0"]
-build-backend = "setuptools.build_meta"
-[tool.setuptools.package-data]
-"templates" = [".github/**/*", "AGENTS.md", "CLAUDE.md"]
-
 [tool.setuptools.packages.find]
+where = ["."]
 include = ["hooks*", "templates*"]
 exclude = [".github*", "tests*", "scripts*"]
 
 [tool.setuptools.package-data]
-"templates" = [".github/**/*"]
+"templates" = [".github/**/*", "AGENTS.md", "CLAUDE.md"]
 
 [tool.setuptools.exclude-package-data]
 "templates" = [".github/workflows/test_hooks.yml"]
-where = ["."]
