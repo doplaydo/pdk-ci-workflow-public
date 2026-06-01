@@ -56,7 +56,19 @@ if cell_name == "all_cells":
             c.add_ref(func())
         except Exception as e:  # noqa: BLE001
             print(f"Error instantiating cell {name}: {e}")
-    c.write_gds(f"build/gds/{cell_name}.gds")
+
+    try:
+        c.write_gds(f"build/gds/{cell_name}.gds")
+    except RuntimeError as e:
+        # This string is raised by kfactory's `KCell.write` path in
+        # `src/kfactory/kcell.py`, where it delegates to
+        # `self._base.kdb_cell.write(...)` for the actual save.
+        if "more than one cell" not in str(e):
+            raise
+        print(f"Warning: {e}")
+        print("Flattening to resolve duplicate subcell names...")
+        c.flatten()
+        c.write_gds(f"build/gds/{cell_name}.gds")
 else:
     candidate_names = [cell_name, f"_{cell_name}"]
     cell_func = None
