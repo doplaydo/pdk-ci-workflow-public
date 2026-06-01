@@ -132,7 +132,7 @@ jobs:
                   return 0
 
           open_issues = gh_count("is:issue+is:open")
-          open_prs = gh_count("is:pr+is:open")
+          open_prs = gh_count("is:pr+is:open+draft:false")
           make_badge("issues", str(open_issues), "#4c1" if open_issues == 0 else ("#dfb317" if open_issues < 10 else "#e05d44"), "issues.svg")
           make_badge("PRs", str(open_prs), "#4c1" if open_prs == 0 else ("#dfb317" if open_prs < 10 else "#e05d44"), "prs.svg")
 
