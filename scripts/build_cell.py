@@ -60,6 +60,9 @@ if cell_name == "all_cells":
     try:
         c.write_gds(f"build/gds/{cell_name}.gds")
     except RuntimeError as e:
+        # This string is raised by kfactory's `KCell.write` path in
+        # `src/kfactory/kcell.py`, where it delegates to
+        # `self._base.kdb_cell.write(...)` for the actual save.
         if "more than one cell" not in str(e):
             raise
         print(f"Warning: {e}")
