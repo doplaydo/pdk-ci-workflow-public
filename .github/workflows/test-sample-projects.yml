@@ -50,6 +50,8 @@ jobs:
         run: uv run --no-project --with gdsfactoryplus gfp configure --api-key ${{ secrets.GFP_API_KEY }} --uv
       - name: Install dependencies
         run: uv sync --all-extras
+      - name: Install current PDK
+        run: uv pip install -e "$GITHUB_WORKSPACE"
       - name: Test
         run: uv run gfp test
 
@@ -80,6 +82,8 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libglu1-mesa libgl1
       - name: Install dependencies
         run: uv sync --all-extras
+      - name: Install current PDK
+        run: uv pip install -e "$GITHUB_WORKSPACE"
       - name: Install notebook tools
         run: uv pip install nbconvert ipykernel
       - name: Execute notebooks
@@ -129,6 +133,8 @@ jobs:
         run: uv run --no-project --with gdsfactoryplus gfp configure --api-key ${{ secrets.GFP_API_KEY }} --uv
       - name: Install dependencies
         run: uv sync --all-extras
+      - name: Install current PDK
+        run: uv pip install -e "$GITHUB_WORKSPACE"
       - name: Check for DRC cell
         id: drc_check
         run: |
