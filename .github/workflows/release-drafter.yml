@@ -22,6 +22,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: actions/checkout@v4
+        if: steps.drafter.outputs.body != '' && env.ANTHROPIC_API_KEY != ''
+
       - name: Curate release notes with Claude
         if: steps.drafter.outputs.body != '' && env.ANTHROPIC_API_KEY != ''
         run: |
