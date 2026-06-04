@@ -48,10 +48,33 @@ jobs:
           python-version: "3.12"
       - name: Configure gfp
         run: uv run --no-project --with gdsfactoryplus gfp configure --api-key ${{ secrets.GFP_API_KEY }} --uv
-      - name: Install dependencies
-        run: uv sync --all-extras
+      - name: Prepare PDK variant
+        run: |
+          python3 << 'PYEOF'
+          import tomllib, subprocess, os, re
+          ws = os.environ["GITHUB_WORKSPACE"]
+          with open(os.path.join(ws, "pyproject.toml"), "rb") as f:
+              root_name = tomllib.load(f)["project"]["name"]
+          with open("pyproject.toml", "rb") as f:
+              deps = tomllib.load(f)["project"]["dependencies"]
+          for d in deps:
+              dep_name = re.split(r"[\[~><=!;@\s]", d)[0]
+              if dep_name != root_name and dep_name.startswith(root_name + "-"):
+                  variant = dep_name[len(root_name) + 1:]
+                  makefile = os.path.join(ws, "Makefile")
+                  if os.path.isfile(makefile):
+                      r = subprocess.run(["make", "-C", ws, "-n", f"prepare-{variant}"], capture_output=True)
+                      if r.returncode == 0:
+                          print(f"Preparing variant: {variant}")
+                          subprocess.check_call(["make", "-C", ws, f"prepare-{variant}"])
+                  break
+          PYEOF
       - name: Install current PDK
-        run: uv pip install -e "$GITHUB_WORKSPACE"
+        run: |
+          uv venv
+          uv pip install -e "$GITHUB_WORKSPACE"
+      - name: Install dependencies
+        run: uv pip install -e "."
       - name: Test
         run: uv run gfp test
 
@@ -80,10 +103,33 @@ jobs:
         run: uv run --no-project --with gdsfactoryplus gfp configure --api-key ${{ secrets.GFP_API_KEY }} --uv
       - name: Install system dependencies
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libglu1-mesa libgl1
-      - name: Install dependencies
-        run: uv sync --all-extras
+      - name: Prepare PDK variant
+        run: |
+          python3 << 'PYEOF'
+          import tomllib, subprocess, os, re
+          ws = os.environ["GITHUB_WORKSPACE"]
+          with open(os.path.join(ws, "pyproject.toml"), "rb") as f:
+              root_name = tomllib.load(f)["project"]["name"]
+          with open("pyproject.toml", "rb") as f:
+              deps = tomllib.load(f)["project"]["dependencies"]
+          for d in deps:
+              dep_name = re.split(r"[\[~><=!;@\s]", d)[0]
+              if dep_name != root_name and dep_name.startswith(root_name + "-"):
+                  variant = dep_name[len(root_name) + 1:]
+                  makefile = os.path.join(ws, "Makefile")
+                  if os.path.isfile(makefile):
+                      r = subprocess.run(["make", "-C", ws, "-n", f"prepare-{variant}"], capture_output=True)
+                      if r.returncode == 0:
+                          print(f"Preparing variant: {variant}")
+                          subprocess.check_call(["make", "-C", ws, f"prepare-{variant}"])
+                  break
+          PYEOF
       - name: Install current PDK
-        run: uv pip install -e "$GITHUB_WORKSPACE"
+        run: |
+          uv venv
+          uv pip install -e "$GITHUB_WORKSPACE"
+      - name: Install dependencies
+        run: uv pip install -e "."
       - name: Install notebook tools
         run: uv pip install nbconvert ipykernel
       - name: Execute notebooks
@@ -131,10 +177,33 @@ jobs:
           python-version: "3.12"
       - name: Configure gfp
         run: uv run --no-project --with gdsfactoryplus gfp configure --api-key ${{ secrets.GFP_API_KEY }} --uv
-      - name: Install dependencies
-        run: uv sync --all-extras
+      - name: Prepare PDK variant
+        run: |
+          python3 << 'PYEOF'
+          import tomllib, subprocess, os, re
+          ws = os.environ["GITHUB_WORKSPACE"]
+          with open(os.path.join(ws, "pyproject.toml"), "rb") as f:
+              root_name = tomllib.load(f)["project"]["name"]
+          with open("pyproject.toml", "rb") as f:
+              deps = tomllib.load(f)["project"]["dependencies"]
+          for d in deps:
+              dep_name = re.split(r"[\[~><=!;@\s]", d)[0]
+              if dep_name != root_name and dep_name.startswith(root_name + "-"):
+                  variant = dep_name[len(root_name) + 1:]
+                  makefile = os.path.join(ws, "Makefile")
+                  if os.path.isfile(makefile):
+                      r = subprocess.run(["make", "-C", ws, "-n", f"prepare-{variant}"], capture_output=True)
+                      if r.returncode == 0:
+                          print(f"Preparing variant: {variant}")
+                          subprocess.check_call(["make", "-C", ws, f"prepare-{variant}"])
+                  break
+          PYEOF
       - name: Install current PDK
-        run: uv pip install -e "$GITHUB_WORKSPACE"
+        run: |
+          uv venv
+          uv pip install -e "$GITHUB_WORKSPACE"
+      - name: Install dependencies
+        run: uv pip install -e "."
       - name: Check for DRC cell
         id: drc_check
         run: |
