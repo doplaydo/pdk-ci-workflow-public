@@ -76,7 +76,7 @@ jobs:
       - name: Install dependencies
         run: uv pip install -e "."
       - name: Test
-        run: uv run gfp test
+        run: uv run --no-sync gfp test
 
   notebooks:
     name: Notebooks ${{ matrix.project-dir }}
@@ -150,7 +150,7 @@ jobs:
               continue
             fi
             echo "Executing $notebook"
-            uv run jupyter nbconvert --to notebook --execute "$notebook" \
+            uv run --no-sync jupyter nbconvert --to notebook --execute "$notebook" \
               --output-dir /tmp --ExecutePreprocessor.timeout=600
           done
 
@@ -219,7 +219,7 @@ jobs:
         run: curl -fsSL https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow/main/scripts/build_cell.py -o build_cell.py
       - name: Build sample_drc_errors cell
         if: steps.drc_check.outputs.has_drc == 'true'
-        run: uv run python "$GITHUB_WORKSPACE/build_cell.py" sample_drc_errors
+        run: uv run --no-sync python "$GITHUB_WORKSPACE/build_cell.py" sample_drc_errors
       - name: Run DRC
         if: steps.drc_check.outputs.has_drc == 'true'
         continue-on-error: true
@@ -232,7 +232,7 @@ jobs:
             echo "--- DRC attempt ${attempt}/${max_attempts} ---"
             log_file="build/drc_attempt_${attempt}.log"
             set +e
-            PYTHONUNBUFFERED=1 uv run gfp check drc build/gds/sample_drc_errors.gds \
+            PYTHONUNBUFFERED=1 uv run --no-sync gfp check drc build/gds/sample_drc_errors.gds \
               --outpath build/lyrdb/sample_drc_errors.lyrdb --verbose >"$log_file" 2>&1
             drc_exit=$?
             set -e
