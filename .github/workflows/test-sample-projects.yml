@@ -69,12 +69,8 @@ jobs:
                           subprocess.check_call(["make", "-C", ws, f"prepare-{variant}"])
                   break
           PYEOF
-      - name: Install current PDK
-        run: |
-          uv venv
-          uv pip install -e "$GITHUB_WORKSPACE"
       - name: Install dependencies
-        run: uv pip install -e "."
+        run: uv sync --all-extras --all-groups
       - name: Test
         run: uv run --no-sync gfp test
 
