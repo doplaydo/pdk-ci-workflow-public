@@ -24,10 +24,12 @@ jobs:
     permissions:
       issues: write
     steps:
-      - name: Add label
+      - name: Add labels
         run: |
           gh label create "pdk" --force
           gh issue edit ${{ github.event.issue.number }} --add-label "pdk"
+          gh label create "pdk:${{ github.event.repository.name }}" --color D93F0B --description "PDK this issue belongs to" --force
+          gh issue edit ${{ github.event.issue.number }} --add-label "pdk:${{ github.event.repository.name }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}

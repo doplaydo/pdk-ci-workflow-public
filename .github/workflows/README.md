@@ -14,7 +14,7 @@ PDK repos create thin wrapper workflows that call these using `secrets: inherit`
 | `claude-pr-review.yml` | review | `ANTHROPIC_API_KEY` | AI code review via Claude Sonnet 4. Auto-runs on PR open/reopen; re-runs only when a human posts `/claude-api review` on the PR |
 | `release-drafter.yml` | update_release_draft | `GITHUB_TOKEN`, `ANTHROPIC_API_KEY` | Auto-drafted release notes with Claude-curated changelog |
 | `drc.yml` | drc | `GFP_API_KEY` | Design Rule Check with badge generation |
-| `issue.yml` | add-label | `GITHUB_TOKEN` | Auto-labels issues with "pdk" tag |
+| `issue.yml` | add-label | `GITHUB_TOKEN` | Auto-labels issues with the `pdk` tag plus a per-repository `pdk:<repo-name>` tag |
 | `test_coverage.yml` | coverage | `GFP_API_KEY` | Pytest with line coverage reporting |
 | `model_coverage.yml` | model-coverage | `GFP_API_KEY` | PDK model-to-cell coverage check |
 | `model_regression.yml` | model-regression | `GFP_API_KEY` | Model-specific regression tests |
