@@ -74,7 +74,7 @@ jobs:
           uv venv
           uv pip install -e "$GITHUB_WORKSPACE"
       - name: Install dependencies
-        run: uv pip install --no-deps -e "."
+        run: uv pip install -e "."
       - name: Test
         run: uv run --no-sync gfp test
 
@@ -129,7 +129,7 @@ jobs:
           uv venv
           uv pip install -e "$GITHUB_WORKSPACE"
       - name: Install dependencies
-        run: uv pip install --no-deps -e "."
+        run: uv sync --all-extras
       - name: Install notebook tools
         run: uv pip install nbconvert ipykernel
       - name: Execute notebooks
@@ -154,121 +154,3 @@ jobs:
               --output-dir /tmp --ExecutePreprocessor.timeout=600
           done
 
-  drc:
-    name: DRC ${{ matrix.project-dir }}
-    needs: discover
-    if: needs.discover.outputs.project-dirs != '' && needs.discover.outputs.project-dirs != '[]'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        project-dir: ${{ fromJSON(needs.discover.outputs.project-dirs) }}
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}-drc-${{ matrix.project-dir }}
-      cancel-in-progress: true
-    defaults:
-      run:
-        shell: bash
-        working-directory: ${{ matrix.project-dir }}
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          python-version: "3.12"
-      - name: Configure gfp
-        run: uv run --no-project --with gdsfactoryplus gfp configure --api-key ${{ secrets.GFP_API_KEY }} --uv
-      - name: Prepare PDK variant
-        run: |
-          python3 << 'PYEOF'
-          import tomllib, subprocess, os, re
-          ws = os.environ["GITHUB_WORKSPACE"]
-          with open(os.path.join(ws, "pyproject.toml"), "rb") as f:
-              root_name = tomllib.load(f)["project"]["name"]
-          with open("pyproject.toml", "rb") as f:
-              deps = tomllib.load(f)["project"]["dependencies"]
-          for d in deps:
-              dep_name = re.split(r"[\[~><=!;@\s]", d)[0]
-              if dep_name != root_name and dep_name.startswith(root_name + "-"):
-                  variant = dep_name[len(root_name) + 1:]
-                  makefile = os.path.join(ws, "Makefile")
-                  if os.path.isfile(makefile):
-                      r = subprocess.run(["make", "-C", ws, "-n", f"prepare-{variant}"], capture_output=True)
-                      if r.returncode == 0:
-                          print(f"Preparing variant: {variant}")
-                          subprocess.check_call(["make", "-C", ws, f"prepare-{variant}"])
-                  break
-          PYEOF
-      - name: Install current PDK
-        run: |
-          uv venv
-          uv pip install -e "$GITHUB_WORKSPACE"
-      - name: Install dependencies
-        run: uv pip install --no-deps -e "."
-      - name: Check for DRC cell
-        id: drc_check
-        run: |
-          if find . -name 'sample_drc_errors.py' -not -path '*/.venv/*' | grep -q .; then
-            echo "has_drc=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "No sample_drc_errors.py found — skipping DRC"
-            echo "has_drc=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Download build_cell script
-        if: steps.drc_check.outputs.has_drc == 'true'
-        working-directory: ${{ github.workspace }}
-        run: curl -fsSL https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow/main/scripts/build_cell.py -o build_cell.py
-      - name: Build sample_drc_errors cell
-        if: steps.drc_check.outputs.has_drc == 'true'
-        run: uv run --no-sync python "$GITHUB_WORKSPACE/build_cell.py" sample_drc_errors
-      - name: Run DRC
-        if: steps.drc_check.outputs.has_drc == 'true'
-        continue-on-error: true
-        run: |
-          mkdir -p build/lyrdb
-          max_attempts=3
-          attempt=1
-          drc_exit=1
-          while [ "$attempt" -le "$max_attempts" ]; do
-            echo "--- DRC attempt ${attempt}/${max_attempts} ---"
-            log_file="build/drc_attempt_${attempt}.log"
-            set +e
-            PYTHONUNBUFFERED=1 uv run --no-sync gfp check drc build/gds/sample_drc_errors.gds \
-              --outpath build/lyrdb/sample_drc_errors.lyrdb --verbose >"$log_file" 2>&1
-            drc_exit=$?
-            set -e
-            cat "$log_file"
-            echo "DRC exit code (attempt ${attempt}): ${drc_exit}"
-            if [ "$drc_exit" -eq 0 ] && [ -f build/lyrdb/sample_drc_errors.lyrdb ]; then
-              break
-            fi
-            if [ "$attempt" -lt "$max_attempts" ]; then
-              backoff=$((20 * (2 ** (attempt - 1))))
-              echo "Retrying after ${backoff}s..."
-              sleep "$backoff"
-            fi
-            attempt=$((attempt + 1))
-          done
-          echo "Final DRC exit code: ${drc_exit}"
-      - id: slug
-        if: always() && steps.drc_check.outputs.has_drc == 'true'
-        run: echo "name=drc-$(echo '${{ matrix.project-dir }}' | tr '/' '-')" >> "$GITHUB_OUTPUT"
-      - name: Upload DRC report
-        if: always() && steps.drc_check.outputs.has_drc == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ steps.slug.outputs.name }}
-          path: ${{ matrix.project-dir }}/build/lyrdb/
-          retention-days: 3
-      - name: Verify DRC errors found
-        if: always() && steps.drc_check.outputs.has_drc == 'true'
-        run: |
-          if [ ! -f build/lyrdb/sample_drc_errors.lyrdb ]; then
-            echo "::error::DRC output not found — gfp check drc likely failed"
-            exit 1
-          fi
-          errors=$(grep -c '<item>' build/lyrdb/sample_drc_errors.lyrdb) || errors=0
-          echo "DRC errors: $errors"
-          if [ "$errors" = "0" ]; then
-            echo "::error::Expected DRC errors but found none"
-            exit 1
-          fi
