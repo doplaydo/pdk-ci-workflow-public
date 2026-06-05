@@ -74,7 +74,7 @@ jobs:
           uv venv
           uv pip install -e "$GITHUB_WORKSPACE"
       - name: Install dependencies
-        run: uv pip install -e "."
+        run: uv pip install --no-deps -e "."
       - name: Test
         run: uv run --no-sync gfp test
 
@@ -129,7 +129,7 @@ jobs:
           uv venv
           uv pip install -e "$GITHUB_WORKSPACE"
       - name: Install dependencies
-        run: uv pip install -e "."
+        run: uv pip install --no-deps -e "."
       - name: Install notebook tools
         run: uv pip install nbconvert ipykernel
       - name: Execute notebooks
@@ -203,7 +203,7 @@ jobs:
           uv venv
           uv pip install -e "$GITHUB_WORKSPACE"
       - name: Install dependencies
-        run: uv pip install -e "."
+        run: uv pip install --no-deps -e "."
       - name: Check for DRC cell
         id: drc_check
         run: |
