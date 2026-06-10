@@ -69,6 +69,19 @@ jobs:
                           subprocess.check_call(["make", "-C", ws, f"prepare-{variant}"])
                   break
           PYEOF
+      - name: Use local PDK source
+        run: |
+          python3 << 'PYEOF'
+          import tomllib, os
+          ws = os.environ["GITHUB_WORKSPACE"]
+          with open(os.path.join(ws, "pyproject.toml"), "rb") as f:
+              pdk_name = tomllib.load(f)["project"]["name"]
+          with open("pyproject.toml") as f:
+              content = f.read()
+          if "[tool.uv.sources]" not in content:
+              with open("pyproject.toml", "a") as f:
+                  f.write(f'\n[tool.uv.sources]\n{pdk_name} = {{path = "{ws}"}}\n')
+          PYEOF
       - name: Install dependencies
         run: uv sync --all-extras --all-groups
       - name: Test
@@ -120,10 +133,19 @@ jobs:
                           subprocess.check_call(["make", "-C", ws, f"prepare-{variant}"])
                   break
           PYEOF
-      - name: Install current PDK
+      - name: Use local PDK source
         run: |
-          uv venv
-          uv pip install -e "$GITHUB_WORKSPACE"
+          python3 << 'PYEOF'
+          import tomllib, os
+          ws = os.environ["GITHUB_WORKSPACE"]
+          with open(os.path.join(ws, "pyproject.toml"), "rb") as f:
+              pdk_name = tomllib.load(f)["project"]["name"]
+          with open("pyproject.toml") as f:
+              content = f.read()
+          if "[tool.uv.sources]" not in content:
+              with open("pyproject.toml", "a") as f:
+                  f.write(f'\n[tool.uv.sources]\n{pdk_name} = {{path = "{ws}"}}\n')
+          PYEOF
       - name: Install dependencies
         run: uv sync --all-extras
       - name: Install notebook tools
