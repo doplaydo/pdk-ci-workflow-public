@@ -147,6 +147,25 @@ class TestCheckCellsStructure:
         )
         assert main() == 0
 
+    def test_vcell_decorator_passes(self, pdk_root: Path) -> None:
+        """@gf.vcell should be recognized as a valid cell decorator."""
+        (pdk_root / "my_pdk" / "cells" / "waveguides.py").write_text(
+            textwrap.dedent("""\
+                import gdsfactory as gf
+                from gdsfactory.component import ComponentAllAngle
+
+                @gf.vcell
+                def my_bend(angle: float = 90.0) -> ComponentAllAngle:
+                    \"\"\"A test bend.
+
+                    Args:
+                        angle: bend angle.
+                    \"\"\"
+                    return gf.Component()
+            """)
+        )
+        assert main() == 0
+
     def test_no_package_dir_warns(
         self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch"
     ) -> None:

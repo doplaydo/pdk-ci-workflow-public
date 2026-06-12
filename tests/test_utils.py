@@ -157,6 +157,24 @@ class TestIsGfCellDecorator:
         aliases = {"cell": "gdsfactory.cell"}
         assert is_gf_cell_decorator(func.decorator_list[0], aliases)
 
+    def test_gf_dot_vcell(self) -> None:
+        tree = ast.parse("@gf.vcell\ndef f(): pass\n")
+        func = tree.body[0]
+        aliases = {"gf": "gdsfactory"}
+        assert is_gf_cell_decorator(func.decorator_list[0], aliases)
+
+    def test_gf_dot_vcell_call(self) -> None:
+        tree = ast.parse("@gf.vcell()\ndef f(): pass\n")
+        func = tree.body[0]
+        aliases = {"gf": "gdsfactory"}
+        assert is_gf_cell_decorator(func.decorator_list[0], aliases)
+
+    def test_bare_vcell(self) -> None:
+        tree = ast.parse("@vcell\ndef f(): pass\n")
+        func = tree.body[0]
+        aliases = {"vcell": "gdsfactory.vcell"}
+        assert is_gf_cell_decorator(func.decorator_list[0], aliases)
+
     def test_unrelated_decorator(self) -> None:
         tree = ast.parse("@property\ndef f(): pass\n")
         func = tree.body[0]

@@ -302,14 +302,17 @@ def has_decorator(func_def: ast.FunctionDef, name: str) -> bool:
     return False
 
 
+_GF_CELL_ATTRS = {"cell", "vcell"}
+
+
 def is_gf_cell_decorator(decorator: ast.expr, aliases: dict[str, str]) -> bool:
-    """Check if a decorator node represents @gf.cell (or equivalent)."""
+    """Check if a decorator node represents @gf.cell / @gf.vcell (or equivalent)."""
     # Unwrap Call: @gf.cell() or @gf.cell(autoname=True)
     node = decorator.func if isinstance(decorator, ast.Call) else decorator
 
     if isinstance(node, ast.Attribute):
-        # gf.cell -> check if gf resolves to gdsfactory
-        if node.attr == "cell" and isinstance(node.value, ast.Name):
+        # gf.cell / gf.vcell -> check if gf resolves to gdsfactory
+        if node.attr in _GF_CELL_ATTRS and isinstance(node.value, ast.Name):
             resolved = aliases.get(node.value.id, node.value.id)
             if "gdsfactory" in resolved or node.value.id == "gf":
                 return True
@@ -318,7 +321,7 @@ def is_gf_cell_decorator(decorator: ast.expr, aliases: dict[str, str]) -> bool:
         resolved = aliases.get(node.id, "")
         if "gdsfactory" in resolved and "cell" in resolved:
             return True
-        if node.id in ("cell", "_cell"):
+        if node.id in ("cell", "_cell", "vcell"):
             return True
     return False
 
