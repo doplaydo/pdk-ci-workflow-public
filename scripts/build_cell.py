@@ -4,10 +4,13 @@ When cell_name is "all_cells", builds every PDK-owned cell that can be
 instantiated with default arguments and packs them into a single GDS.
 Cells from installed packages (site-packages / .venv), cells located
 under a ``samples/`` directory (demo/tapeout cells that reuse BB cells
-and would cause cellname collisions), and cells that require positional
-arguments are skipped automatically.
+and would cause cellname collisions), cells whose names start with "_",
+and cells that require positional arguments are skipped automatically.
+
+Use ``--skip cell1 cell2 ...`` to skip additional cells by name.
 """
 
+import argparse
 import importlib.util
 import inspect
 import sys
@@ -15,7 +18,13 @@ from pathlib import Path
 
 from gdsfactoryplus.core.pdk import get_pdk, register_cells
 
-cell_name = sys.argv[1]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("cell_name", help="Cell to build, or 'all_cells'")
+parser.add_argument("--skip", nargs="*", default=[], help="Cell names to skip when building all_cells")
+args = parser.parse_args()
+
+cell_name = args.cell_name
+skip_cells = set(args.skip)
 Path("build/gds").mkdir(parents=True, exist_ok=True)
 register_cells()
 pdk = get_pdk()
@@ -25,6 +34,14 @@ if cell_name == "all_cells":
 
     components = []
     for name, func in sorted(pdk.cells.items()):
+        if name in skip_cells:
+            print(f"Skipping {name}: in --skip list")
+            continue
+
+        if name.startswith("_"):
+            print(f"Skipping {name}: starts with '_'")
+            continue
+
         # Skip cells from installed packages (not PDK-owned)
         try:
             src = inspect.getfile(inspect.unwrap(func))
