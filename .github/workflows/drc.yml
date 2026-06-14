@@ -28,7 +28,13 @@ jobs:
       - name: Download build_cell script
         run: curl -fsSL https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow/main/scripts/build_cell.py -o build_cell.py
       - name: Build cell
-        run: uv run python build_cell.py all_cells
+        run: |
+          SKIP_ARGS=""
+          SKIP_FILE=$(find . -name build_cell_skip.txt -not -path './.venv/*' -print -quit)
+          if [ -n "$SKIP_FILE" ]; then
+            SKIP_ARGS="--skip $(grep -v '^\s*#' "$SKIP_FILE" | grep -v '^\s*$' | tr '\n' ' ')"
+          fi
+          uv run python build_cell.py all_cells $SKIP_ARGS
       - name: Run DRC
         run: |
           mkdir -p build/lyrdb
