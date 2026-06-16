@@ -1,6 +1,6 @@
 # Canonical pre-commit config for GDSFactory PDK repos.
 #
-# All hooks (PDK checks + third-party tools) are defined in pdk-ci-workflow.
+# All hooks (PDK checks + third-party tools) are defined in pdk-ci-workflow-public.
 # Versions of third-party tools are controlled centrally via
 # additional_dependencies — no per-repo version pinning needed.
 #
@@ -11,7 +11,7 @@
 # per-hook settings below without changing this file's single-repo structure.
 
 repos:
-  - repo: https://github.com/doplaydo/pdk-ci-workflow
+  - repo: https://github.com/doplaydo/pdk-ci-workflow-public
     rev: main
     hooks:
       # PDK structure validation
@@ -30,7 +30,7 @@ repos:
       - id: check-no-main-in-cells
       - id: check-precommit-config
       - id: check-template-drift
-      # Code quality (versions controlled by pdk-ci-workflow)
+      # Code quality (versions controlled by pdk-ci-workflow-public)
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
