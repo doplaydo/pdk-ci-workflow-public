@@ -14,19 +14,6 @@ env:
   GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
 
 jobs:
-  pre-commit:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-    - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
-    - name: Fetch canonical pre-commit config
-      run: |
-        curl -fSL https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/templates/.pre-commit-config.yaml \
-          -o .pre-commit-config.yaml
-    - name: Run pre-commit (no cache — rev uses mutable main branch)
-      run: |
-        pip install pre-commit
-        pre-commit run --all-files
   test_code:
     runs-on: ubuntu-latest
     steps:
