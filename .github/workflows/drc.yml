@@ -26,7 +26,7 @@ jobs:
       - name: Configure gfp
         run: uv run gfp configure --api-key ${{ secrets.GFP_API_KEY }} --uv
       - name: Download build_cell script
-        run: curl -fsSL https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow/main/scripts/build_cell.py -o build_cell.py
+        run: curl -fsSL https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/scripts/build_cell.py -o build_cell.py
       - name: Build cell
         run: |
           SKIP_ARGS=""

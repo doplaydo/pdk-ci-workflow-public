@@ -32,6 +32,6 @@ on:
 
 jobs:
   test:
-    uses: doplaydo/pdk-ci-workflow/.github/workflows/test_code.yml@main
+    uses: doplaydo/pdk-ci-workflow-public/.github/workflows/test_code.yml@main
     secrets: inherit
 ```
