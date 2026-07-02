@@ -17,12 +17,41 @@ jobs:
   pre-commit:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-    - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
     - name: Fetch canonical pre-commit config
       run: |
-        curl -fSL https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/templates/.pre-commit-config.yaml \
+        python3 -c "
+        import yaml, os
+        exclude = None
+        try:
+            with open('.pre-commit-config.yaml') as f:
+                cfg = yaml.safe_load(f)
+            if cfg and 'exclude' in cfg:
+                exclude = cfg['exclude']
+        except Exception:
+            pass
+        if exclude:
+            with open('.repo-exclude', 'w') as f:
+                f.write(exclude)
+        " 2>/dev/null || true
+
+        curl -fSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/templates/.pre-commit-config.yaml" \
           -o .pre-commit-config.yaml
+
+        if [ -f .repo-exclude ]; then
+          python3 << 'PYEOF'
+        import yaml
+        with open('.repo-exclude') as f:
+            exclude = f.read().strip()
+        with open('.pre-commit-config.yaml') as f:
+            cfg = yaml.safe_load(f)
+        cfg['exclude'] = exclude
+        with open('.pre-commit-config.yaml', 'w') as f:
+            yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
+        PYEOF
+          rm .repo-exclude
+        fi
     - name: Run pre-commit (no cache — rev uses mutable main branch)
       run: |
         pip install pre-commit
@@ -30,9 +59,9 @@ jobs:
   test_code:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
       - name: Install uv
@@ -53,9 +82,9 @@ jobs:
   test_gfp:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
       - name: Install uv
