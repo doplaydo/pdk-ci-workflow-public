@@ -17,7 +17,7 @@ jobs:
   badges:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           python-version: "3.12"
@@ -99,6 +99,7 @@ jobs:
 
           # --- Model Coverage ---
           pdk_module = os.environ.get("PDK_MODULE", "")
+          total = 0
           try:
               with open("pyproject.toml", "rb") as f:
                   cfg = tomllib.load(f)
@@ -117,6 +118,7 @@ jobs:
               model_pct = 0
           color = "#4c1" if model_pct >= 80 else ("#dfb317" if model_pct >= 40 else "#e05d44")
           make_badge("models", f"{model_pct:.0f}%", color, "model_coverage.svg")
+          make_badge("cells", str(total), "#007ec6", "cells.svg")
 
           # --- Open Issues & PRs ---
           repo = os.environ.get("GITHUB_REPOSITORY", "")

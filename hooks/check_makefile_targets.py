@@ -76,6 +76,7 @@ def main() -> int:
                 "consider migrating to 'uv build' or 'python -m build'"
             )
 
+
     return result.report()
 
 

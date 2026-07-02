@@ -361,3 +361,81 @@ def get_docstring_from_node(node: ast.FunctionDef) -> str | None:
     ):
         return node.body[0].value.value
     return None
+
+
+# ── Public-sync marker processing ───────────────────────────────────
+
+_MARKER_START = {
+}
+
+_UNCOMMENT_RE = re.compile(r"^(\s*)#\s?(.*)$")
+
+
+def _uncomment(line: str) -> str:
+    newline = "\n" if line.endswith("\n") else ""
+    body = line[: len(line) - len(newline)] if newline else line
+    m = _UNCOMMENT_RE.match(body)
+    if not m:
+        return line
+    indent, rest = m.groups()
+    return f"{indent}{rest}{newline}"
+
+
+def apply_sync_markers(text: str, *, keep: str) -> str:
+    """Resolve `# SYNC-PUBLIC:*` marker regions in `text` for one audience.
+
+    Two marker kinds:
+    - `strip-start`/`strip-end`: private-only content with no public
+      equivalent. For `keep="public"` the whole region (markers + content)
+      is dropped. For `keep="private"` only the two marker lines are
+      dropped; the content stays active.
+    - `private-start`/`private-end` paired with `public-start`/`public-end`:
+      two alternative implementations of the same functionality. The
+      `public` branch's content lines are comment-prefixed in source (so
+      they're inert where `private` is active) and get uncommented when
+      resolved for `keep="public"`.
+    """
+    if keep not in ("private", "public"):
+        raise ValueError(f"keep must be 'private' or 'public', got {keep!r}")
+
+    out: list[str] = []
+    region: str | None = None  # None | "strip" | "private" | "public"
+
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip("\n")
+
+        if _MARKER_START["strip"] in stripped:
+            region = "strip"
+            continue
+        if _MARKER_START["strip-end"] in stripped:
+            region = None
+            continue
+        if _MARKER_START["private-start"] in stripped:
+            region = "private"
+            continue
+        if _MARKER_START["private-end"] in stripped:
+            region = None
+            continue
+        if _MARKER_START["public-start"] in stripped:
+            region = "public"
+            continue
+        if _MARKER_START["public-end"] in stripped:
+            region = None
+            continue
+
+        if region == "strip":
+            if keep == "private":
+                out.append(line)
+            continue
+        if region == "private":
+            if keep == "private":
+                out.append(line)
+            continue
+        if region == "public":
+            if keep == "public":
+                out.append(_uncomment(line))
+            continue
+
+        out.append(line)
+
+    return "".join(out)

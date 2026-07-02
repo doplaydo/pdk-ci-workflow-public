@@ -12,6 +12,7 @@ from hypothesis import strategies as st
 
 from hooks._utils import (
     CheckResult,
+    apply_sync_markers,
     find_assignments,
     find_band_dirs,
     find_cell_files,
@@ -340,3 +341,62 @@ class TestFindCellFiles:
         result = find_cell_files(tmp_path)
         assert len(result) == 1
         assert result[0].name == "cells.py"
+
+
+# ── apply_sync_markers ───────────────────────────────────────────────
+
+
+class TestApplySyncMarkers:
+    def test_strip_block_removed_for_public(self) -> None:
+        text = (
+            "before\n"
+            "after\n"
+        )
+        assert apply_sync_markers(text, keep="public") == "before\nafter\n"
+
+    def test_strip_block_markers_removed_for_private_content_kept(self) -> None:
+        text = (
+            "before\n"
+            "after\n"
+        )
+        assert (
+            apply_sync_markers(text, keep="private")
+            == "before\nsecret_line\nafter\n"
+        )
+
+    def test_private_public_swap_for_public_uncomments_public_branch(self) -> None:
+        text = (
+            "before\n"
+            "# curl public-fetch\n"
+            "after\n"
+        )
+        assert (
+            apply_sync_markers(text, keep="public")
+            == "before\ncurl public-fetch\nafter\n"
+        )
+
+    def test_private_public_swap_for_private_keeps_private_branch_active(self) -> None:
+        text = (
+            "before\n"
+            "# curl public-fetch\n"
+            "after\n"
+        )
+        assert (
+            apply_sync_markers(text, keep="private")
+            == "before\ngh api private-fetch\nafter\n"
+        )
+
+    def test_preserves_indentation_on_uncomment(self) -> None:
+        text = (
+            "\t# curl public-fetch\n"
+        )
+        assert apply_sync_markers(text, keep="public") == "\tcurl public-fetch\n"
+
+    def test_no_markers_is_a_no_op(self) -> None:
+        text = "plain\nfile\ncontent\n"
+        assert apply_sync_markers(text, keep="public") == text
+        assert apply_sync_markers(text, keep="private") == text
+
+    def test_invalid_keep_raises(self) -> None:
+        with pytest.raises(ValueError):
+            apply_sync_markers("x\n", keep="nonsense")
