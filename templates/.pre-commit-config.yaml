@@ -1,6 +1,6 @@
 # Canonical pre-commit config for GDSFactory PDK repos.
 #
-# All hooks (PDK checks + third-party tools) are defined in pdk-ci-workflow-public.
+# All hooks (PDK checks + third-party tools) are defined in pdk-ci-workflow.
 # Versions of third-party tools are controlled centrally via
 # additional_dependencies — no per-repo version pinning needed.
 #
@@ -9,6 +9,11 @@
 #
 # PDK repos needing custom overrides (e.g. check-yaml exclude) can add
 # per-hook settings below without changing this file's single-repo structure.
+
+# references/ holds vendor-supplied fixture data (netlists, blueprints, sim
+# output) that must stay byte-identical to the upstream source — pre-commit
+# hooks must not lint, reformat, or reject it.
+exclude: ^references/
 
 repos:
   - repo: https://github.com/doplaydo/pdk-ci-workflow-public
@@ -30,7 +35,7 @@ repos:
       - id: check-no-main-in-cells
       - id: check-precommit-config
       - id: check-template-drift
-      # Code quality (versions controlled by pdk-ci-workflow-public)
+      # Code quality (versions controlled by pdk-ci-workflow)
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml

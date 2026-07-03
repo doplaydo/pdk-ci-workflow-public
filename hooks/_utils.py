@@ -361,3 +361,91 @@ def get_docstring_from_node(node: ast.FunctionDef) -> str | None:
     ):
         return node.body[0].value.value
     return None
+
+
+# ── Public-sync marker processing ───────────────────────────────────
+
+_MARKER_START = {
+    "strip": "SYNC-PUBLIC:strip-start",
+    "strip-end": "SYNC-PUBLIC:strip-end",
+    "private-start": "SYNC-PUBLIC:private-start",
+    "private-end": "SYNC-PUBLIC:private-end",
+    "public-start": "SYNC-PUBLIC:public-start",
+    "public-end": "SYNC-PUBLIC:public-end",
+}
+
+_MARKER_LINE_RE = re.compile(r"^\s*(?:#|<!--)\s*(SYNC-PUBLIC:[a-z-]+)")
+
+_UNCOMMENT_RE = re.compile(r"^(\s*)#\s?(.*)$")
+
+
+def _uncomment(line: str) -> str:
+    newline = "\n" if line.endswith("\n") else ""
+    body = line[: len(line) - len(newline)] if newline else line
+    m = _UNCOMMENT_RE.match(body)
+    if not m:
+        return line
+    indent, rest = m.groups()
+    return f"{indent}{rest}{newline}"
+
+
+def apply_sync_markers(text: str, *, keep: str) -> str:
+    """Resolve `# SYNC-PUBLIC:*` marker regions in `text` for one audience.
+
+    Two marker kinds:
+    - `strip-start`/`strip-end`: private-only content with no public
+      equivalent. For `keep="public"` the whole region (markers + content)
+      is dropped. For `keep="private"` only the two marker lines are
+      dropped; the content stays active.
+    - `private-start`/`private-end` paired with `public-start`/`public-end`:
+      two alternative implementations of the same functionality. The
+      `public` branch's content lines are comment-prefixed in source (so
+      they're inert where `private` is active) and get uncommented when
+      resolved for `keep="public"`.
+    """
+    if keep not in ("private", "public"):
+        raise ValueError(f"keep must be 'private' or 'public', got {keep!r}")
+
+    out: list[str] = []
+    region: str | None = None  # None | "strip" | "private" | "public"
+
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip("\n")
+        m = _MARKER_LINE_RE.match(stripped)
+        marker = m.group(1) if m else None
+
+        if marker == _MARKER_START["strip"]:
+            region = "strip"
+            continue
+        if marker == _MARKER_START["strip-end"]:
+            region = None
+            continue
+        if marker == _MARKER_START["private-start"]:
+            region = "private"
+            continue
+        if marker == _MARKER_START["private-end"]:
+            region = None
+            continue
+        if marker == _MARKER_START["public-start"]:
+            region = "public"
+            continue
+        if marker == _MARKER_START["public-end"]:
+            region = None
+            continue
+
+        if region == "strip":
+            if keep == "private":
+                out.append(line)
+            continue
+        if region == "private":
+            if keep == "private":
+                out.append(line)
+            continue
+        if region == "public":
+            if keep == "public":
+                out.append(_uncomment(line))
+            continue
+
+        out.append(line)
+
+    return "".join(out)

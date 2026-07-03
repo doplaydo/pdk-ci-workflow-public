@@ -3,7 +3,7 @@
 Validates that all ``.yml`` files in ``.github/workflows/`` and
 ``templates/.github/workflows/`` are well-formed YAML, follow naming
 conventions, and — for templates — act as thin callers into the centralised
-``doplaydo/pdk-ci-workflow`` reusable workflows.
+``doplaydo/pdk-ci-workflow-public`` reusable workflows.
 """
 
 from __future__ import annotations
@@ -119,8 +119,8 @@ class TestTemplateWorkflowYaml:
 
     def test_templates_reference_pdk_ci_workflow(self) -> None:
         """Template ``uses:`` values should reference
-        ``doplaydo/pdk-ci-workflow`` or ``doplaydo/infra``."""
-        allowed_orgs = ("doplaydo/pdk-ci-workflow", "doplaydo/infra")
+        ``doplaydo/pdk-ci-workflow-public`` or ``doplaydo/infra``."""
+        allowed_orgs = ("doplaydo/pdk-ci-workflow-public", "doplaydo/infra")
         for path in _all_workflow_files(TEMPLATES_DIR):
             data = _load_yaml(path)
             if data is None or "jobs" not in data:

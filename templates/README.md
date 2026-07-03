@@ -4,7 +4,8 @@ Copy these files into your PDK repo as-is. No modification needed.
 
 ## Workflows
 
-Minimal wrappers — each just calls the upstream reusable workflow with `secrets: inherit`.
+Minimal wrappers — each calls the upstream reusable workflow and forwards secrets explicitly.
+
 
 | File | Purpose |
 |------|---------|
