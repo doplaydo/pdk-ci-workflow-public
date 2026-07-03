@@ -30,7 +30,7 @@ Each hook is a self-contained Python script that validates some aspect of a PDK 
 | Hook ID | Source | What it checks |
 |---------|--------|---------------|
 | `check-test-structure` | `check_test_structure.py` | `tests/` directory exists with test files, GDS reference directories, `difftest()` calls, and `data_regression` usage |
-| `check-makefile-targets` | `check_makefile_targets.py` | Required targets: install, test. Recommended: docs, build, test-force, update-pre, dev. Content checks: uv sync in install, pytest in test |
+| `check-makefile-targets` | `check_makefile_targets.py` | Required targets: install, test. Recommended: docs, build, test-force, update-pre, dev. Content checks: uv sync in install, pytest in test. Auto-fix: rewrites `dev` target from `curl` to `gh api` if it fetches the pre-commit config via raw GitHub URL (exit 1; re-run exits 0) |
 | `check-workflows` | `check_workflows.py` | `.github/workflows/` has test_code.yml (or test.yml) with pre-commit job and test job; recommends release.yml |
 | `check-precommit-config` | `check_precommit_config.py` | `.pre-commit-config.yaml` includes required hooks (end-of-file-fixer, trailing-whitespace, ruff or ruff-lint, ruff-format) and recommended hooks (nbstripout, codespell) |
 | `check-template-drift` | `check_template_drift.py` | Enforces `.github/dependabot.yml`, `.github/release-drafter.yml`, and `.github/workflows/*.yml` thin callers match upstream `templates/`. Ruff-style auto-fix: missing or drifted files are rewritten from the canonical template, exit 1; re-run exits 0. Conditionally enforces `sample-projects.yml` only in repos containing a `*--sample-projects/` directory. No-ops inside pdk-ci-workflow itself. |
