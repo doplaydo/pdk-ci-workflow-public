@@ -60,7 +60,7 @@ Pre-commit hooks run locally on developer machines before commits are created. T
 
 ### 1. Copy workflow templates
 
-Copy all files from `templates/.github/workflows/` into your repo. Each is a one-liner that delegates to this repo:
+Copy all files from `templates/.github/workflows/` into your repo. Each is a thin wrapper that delegates to this repo and forwards the required secrets explicitly:
 
 ```yaml
 # .github/workflows/test_code.yml
@@ -72,16 +72,18 @@ on:
 
 jobs:
   test:
-    uses: doplaydo/pdk-ci-workflow/.github/workflows/test_code.yml@main
-    secrets: inherit
+    uses: doplaydo/pdk-ci-workflow-public/.github/workflows/test_code.yml@main
+    secrets:
+      GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
 ```
+
 
 ### 2. Set up pre-commit
 
 Add to your `Makefile`:
 ```makefile
 dev: install
-	curl -sf https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow/main/templates/.pre-commit-config.yaml -o .pre-commit-config.yaml
+	curl -sf https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/templates/.pre-commit-config.yaml -o .pre-commit-config.yaml
 	uv run pre-commit install
 ```
 
@@ -120,20 +122,11 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 | `model_regression.yml` | model-regression | Model-specific regression tests |
 | `update_badges.yml` | badges | Generate coverage, model, issue, and PR badges |
 
-All workflows are called from PDK repos using `secrets: inherit`:
-
-```yaml
-jobs:
-  test:
-    uses: doplaydo/pdk-ci-workflow/.github/workflows/test_code.yml@main
-    secrets: inherit
-```
-
-See `templates/.github/workflows/` for ready-to-copy wrappers for each workflow.
+PDK repos call these workflows from thin wrapper files in `.github/workflows/`, passing secrets explicitly. See `templates/.github/workflows/` for ready-to-copy wrappers.
 
 ### Required Secrets
 
-PDK repos should have these secrets configured (passed automatically via `secrets: inherit`):
+PDK repos must have these secrets configured and forwarded explicitly in their wrapper workflows:
 
 | Secret | Used by |
 |--------|---------|
@@ -179,7 +172,7 @@ See [`hooks/README.md`](hooks/README.md) for detailed documentation.
 | Hook ID | What it checks |
 |---------|---------------|
 | `check-test-structure` | `tests/` directory with test files, GDS reference dirs, `difftest()` calls, `data_regression` usage |
-| `check-makefile-targets` | Required targets (install, test) and recommended targets (docs, build, test-force, update-pre, dev) |
+| `check-makefile-targets` | Required targets (install, test) and recommended targets (docs, build, test-force, update-pre, dev). Auto-fix: rewrites `dev` target from `curl` to `gh api` if it still fetches the pre-commit config via raw GitHub URL (exit 1; re-run exits 0) |
 | `check-workflows` | `.github/workflows/` has test_code.yml with pre-commit and test jobs |
 | `check-precommit-config` | `.pre-commit-config.yaml` includes required hooks (trailing-whitespace, end-of-file-fixer, ruff or ruff-lint, ruff-format) |
 | `check-template-drift` | `.github/dependabot.yml`, `.github/release-drafter.yml`, and `.github/workflows/*.yml` thin callers match upstream templates. Auto-fixes by rewriting or creating files. Conditionally deploys `sample-projects.yml` in repos containing `*--sample-projects/` directories. |
@@ -247,7 +240,7 @@ PDK repositories consuming these workflows need:
 
 ### GitHub Secrets
 
-For PDK repositories (passed automatically via `secrets: inherit`):
+For PDK repositories (passed explicitly in each wrapper workflow):
 - `GFP_API_KEY` - GDSFactory Platform validation (test_code, pages, drc, test_coverage, model_coverage, model_regression, update_badges)
 - `ANTHROPIC_API_KEY` - Claude code reviews and release note curation (claude-pr-review, release-drafter)
 - `SIMCLOUD_APIKEY` - Simulation cloud access (pages)

@@ -81,3 +81,41 @@ class TestCheckMakefileTargets:
             """)
         )
         assert main() == 0
+
+    def test_dev_curl_autofix_rewrites_and_fails(self, pdk_root: Path) -> None:
+        """dev target using curl for pdk-ci-workflow is rewritten to gh api and exits 1."""
+        makefile = pdk_root / "Makefile"
+        makefile.write_text(
+            textwrap.dedent("""\
+                install:
+                \tuv sync
+
+                test:
+                \tuv run pytest
+
+                dev: install
+                \tcurl -sf https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/templates/.pre-commit-config.yaml -o .pre-commit-config.yaml
+                \tuv run pre-commit install
+            """)
+        )
+        assert main() == 1
+        rewritten = makefile.read_text()
+        assert "curl" not in rewritten.split("dev:")[1].split("\n")[1]
+        assert "gh api" in rewritten
+
+    def test_dev_gh_api_passes(self, pdk_root: Path) -> None:
+        """dev target using gh api passes without error."""
+        (pdk_root / "Makefile").write_text(
+            textwrap.dedent("""\
+                install:
+                \tuv sync
+
+                test:
+                \tuv run pytest
+
+                dev: install
+                \tgh api "repos/doplaydo/pdk-ci-workflow-public/contents/templates/.pre-commit-config.yaml?ref=main" --header "Accept: application/vnd.github.raw+json" > .pre-commit-config.yaml
+                \tuv run pre-commit install
+            """)
+        )
+        assert main() == 0
