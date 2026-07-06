@@ -76,6 +76,26 @@ def main() -> int:
                 "consider migrating to 'uv build' or 'python -m build'"
             )
 
+    if "dev" in targets:
+        body = targets["dev"]
+        # curl can't authenticate to private repos in CI — must use gh api
+        curl_line = re.compile(
+            r"^\t[^\n]*curl[^\n]*pdk-ci-workflow[^\n]*pre-commit-config\.yaml[^\n]*$",
+            re.MULTILINE,
+        )
+        if curl_line.search(body):
+            gh_api_line = (
+                "\tgh api"
+                ' "repos/doplaydo/pdk-ci-workflow-public/contents/templates/.pre-commit-config.yaml?ref=main"'
+                ' --header "Accept: application/vnd.github.raw+json"'
+                " > .pre-commit-config.yaml"
+            )
+            new_content = curl_line.sub(gh_api_line, content)
+            makefile.write_text(new_content)
+            result.error(
+                "rewrote Makefile dev target: replaced curl with gh api for pre-commit config fetch"
+            )
+
     return result.report()
 
 
