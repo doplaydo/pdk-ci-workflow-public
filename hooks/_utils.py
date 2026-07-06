@@ -361,3 +361,70 @@ def get_docstring_from_node(node: ast.FunctionDef) -> str | None:
     ):
         return node.body[0].value.value
     return None
+
+
+# ── Public-sync marker processing ───────────────────────────────────
+
+_MARKERS = {
+    "SYNC-PRIVATE:begin": "private",
+    "SYNC-PRIVATE:end": None,
+    "SYNC-PUBLIC:begin": "public",
+    "SYNC-PUBLIC:end": None,
+}
+
+_MARKER_LINE_RE = re.compile(r"^\s*(?:#|<!--)\s*(SYNC-(?:PRIVATE|PUBLIC):[a-z]+)")
+
+_UNCOMMENT_RE = re.compile(r"^(\s*)#\s?(.*)$")
+
+
+def _uncomment(line: str) -> str:
+    newline = "\n" if line.endswith("\n") else ""
+    body = line[: len(line) - len(newline)] if newline else line
+    m = _UNCOMMENT_RE.match(body)
+    if not m:
+        return line
+    indent, rest = m.groups()
+    return f"{indent}{rest}{newline}"
+
+
+def apply_sync_markers(text: str, *, keep: str) -> str:
+    """Resolve `SYNC-PRIVATE`/`SYNC-PUBLIC` marker regions in `text` for one audience.
+
+    A `SYNC-PRIVATE:begin/end` block with no immediately-following
+    `SYNC-PUBLIC:begin/end` block is private-only content with no public
+    equivalent: kept (markers stripped) for `keep="private"`, dropped
+    entirely for `keep="public"`.
+
+    A `SYNC-PRIVATE:begin/end` block immediately followed by a
+    `SYNC-PUBLIC:begin/end` block is a pair of alternative implementations
+    of the same functionality. The `SYNC-PUBLIC` branch's content lines are
+    comment-prefixed in source (so they're inert where `private` is active)
+    and get uncommented when resolved for `keep="public"`.
+    """
+    if keep not in ("private", "public"):
+        raise ValueError(f"keep must be 'private' or 'public', got {keep!r}")
+
+    out: list[str] = []
+    region: str | None = None  # None | "private" | "public"
+
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip("\n")
+        m = _MARKER_LINE_RE.match(stripped)
+        marker = m.group(1) if m else None
+
+        if marker is not None:
+            region = _MARKERS[marker]
+            continue
+
+        if region == "private":
+            if keep == "private":
+                out.append(line)
+            continue
+        if region == "public":
+            if keep == "public":
+                out.append(_uncomment(line))
+            continue
+
+        out.append(line)
+
+    return "".join(out)
