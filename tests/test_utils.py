@@ -12,6 +12,7 @@ from hypothesis import strategies as st
 
 from hooks._utils import (
     CheckResult,
+    apply_sync_markers,
     find_assignments,
     find_band_dirs,
     find_cell_files,
@@ -340,3 +341,119 @@ class TestFindCellFiles:
         result = find_cell_files(tmp_path)
         assert len(result) == 1
         assert result[0].name == "cells.py"
+
+
+# ── apply_sync_markers ───────────────────────────────────────────────
+
+
+class TestApplySyncMarkers:
+    def test_strip_block_removed_for_public(self) -> None:
+        text = (
+            "before\n"
+            "# SYNC-PUBLIC:strip-start\n"
+            "secret_line\n"
+            "# SYNC-PUBLIC:strip-end\n"
+            "after\n"
+        )
+        assert apply_sync_markers(text, keep="public") == "before\nafter\n"
+
+    def test_strip_block_markers_removed_for_private_content_kept(self) -> None:
+        text = (
+            "before\n"
+            "# SYNC-PUBLIC:strip-start\n"
+            "secret_line\n"
+            "# SYNC-PUBLIC:strip-end\n"
+            "after\n"
+        )
+        assert (
+            apply_sync_markers(text, keep="private")
+            == "before\nsecret_line\nafter\n"
+        )
+
+    def test_private_public_swap_for_public_uncomments_public_branch(self) -> None:
+        text = (
+            "before\n"
+            "# SYNC-PUBLIC:private-start\n"
+            "gh api private-fetch\n"
+            "# SYNC-PUBLIC:private-end\n"
+            "# SYNC-PUBLIC:public-start\n"
+            "# curl public-fetch\n"
+            "# SYNC-PUBLIC:public-end\n"
+            "after\n"
+        )
+        assert (
+            apply_sync_markers(text, keep="public")
+            == "before\ncurl public-fetch\nafter\n"
+        )
+
+    def test_private_public_swap_for_private_keeps_private_branch_active(self) -> None:
+        text = (
+            "before\n"
+            "# SYNC-PUBLIC:private-start\n"
+            "gh api private-fetch\n"
+            "# SYNC-PUBLIC:private-end\n"
+            "# SYNC-PUBLIC:public-start\n"
+            "# curl public-fetch\n"
+            "# SYNC-PUBLIC:public-end\n"
+            "after\n"
+        )
+        assert (
+            apply_sync_markers(text, keep="private")
+            == "before\ngh api private-fetch\nafter\n"
+        )
+
+    def test_preserves_indentation_on_uncomment(self) -> None:
+        text = (
+            "\t# SYNC-PUBLIC:private-start\n"
+            "\tgh api private-fetch\n"
+            "\t# SYNC-PUBLIC:private-end\n"
+            "\t# SYNC-PUBLIC:public-start\n"
+            "\t# curl public-fetch\n"
+            "\t# SYNC-PUBLIC:public-end\n"
+        )
+        assert apply_sync_markers(text, keep="public") == "\tcurl public-fetch\n"
+
+    def test_no_markers_is_a_no_op(self) -> None:
+        text = "plain\nfile\ncontent\n"
+        assert apply_sync_markers(text, keep="public") == text
+        assert apply_sync_markers(text, keep="private") == text
+
+    def test_invalid_keep_raises(self) -> None:
+        with pytest.raises(ValueError):
+            apply_sync_markers("x\n", keep="nonsense")
+
+    def test_dict_literal_value_is_not_treated_as_marker(self) -> None:
+        """_MARKER_START defines these strings as dict values, not comments —
+        self-application (the public sync step processing hooks/_utils.py)
+        must not corrupt them."""
+        text = (
+            "before\n"
+            '    "strip": "SYNC-PUBLIC:strip-start",\n'
+            '    "strip-end": "SYNC-PUBLIC:strip-end",\n'
+            "after\n"
+        )
+        assert apply_sync_markers(text, keep="public") == text
+        assert apply_sync_markers(text, keep="private") == text
+
+    def test_quoted_marker_text_in_source_fixture_is_not_treated_as_marker(
+        self,
+    ) -> None:
+        """A raw source line containing an escaped marker string (as this
+        very test file's own fixtures do) is not a real comment line."""
+        text = "before\n" '    "# SYNC-PUBLIC:strip-start\\n"\n' "after\n"
+        assert apply_sync_markers(text, keep="public") == text
+        assert apply_sync_markers(text, keep="private") == text
+
+    def test_html_comment_style_marker_is_recognized(self) -> None:
+        text = (
+            "before\n"
+            "<!-- SYNC-PUBLIC:strip-start -->\n"
+            "secret_line\n"
+            "<!-- SYNC-PUBLIC:strip-end -->\n"
+            "after\n"
+        )
+        assert apply_sync_markers(text, keep="public") == "before\nafter\n"
+        assert (
+            apply_sync_markers(text, keep="private")
+            == "before\nsecret_line\nafter\n"
+        )

@@ -14,7 +14,7 @@ import sys
 from importlib.resources import files
 from pathlib import Path
 
-from hooks._utils import CheckResult, load_toml
+from hooks._utils import CheckResult, apply_sync_markers, load_toml
 
 # Paths (relative to PDK repo root) that must match the upstream template of
 # the same relative path under `templates/` in pdk-ci-workflow.
@@ -84,7 +84,7 @@ def _enforce_template(rel: str, root, result: CheckResult) -> None:
         result.error(f"no canonical template shipped for {rel}")
         return
 
-    src_text = src.read_text(encoding="utf-8")
+    src_text = apply_sync_markers(src.read_text(encoding="utf-8"), keep="private")
     local = Path(rel)
 
     if not local.exists():

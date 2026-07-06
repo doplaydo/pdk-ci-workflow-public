@@ -81,3 +81,66 @@ class TestCheckMakefileTargets:
             """)
         )
         assert main() == 0
+
+    def test_dev_curl_autofix_rewrites_and_fails(self, pdk_root: Path) -> None:
+        """dev target fetching a non-canonical source gets normalized and exits 1."""
+        # sync-public.yml's repo-name sed transform runs before sync markers are
+        # resolved and blindly rewrites any literal "doplaydo/pdk-ci-workflow-public" in
+        # this file to "doplaydo/pdk-ci-workflow-public" — including inert test
+        # fixture text outside any SYNC-PUBLIC region. The public variant below
+        # therefore uses a differently-stale URL (missing the doplaydo/ prefix)
+        # so it survives that transform unchanged and still exercises the
+        # autofix instead of accidentally already matching the canonical output.
+        stale_curl = "curl -sf https://raw.githubusercontent.com/some-fork/pdk-ci-workflow/main/templates/.pre-commit-config.yaml -o .pre-commit-config.yaml"
+        makefile = pdk_root / "Makefile"
+        makefile.write_text(
+            textwrap.dedent(f"""\
+                install:
+                \tuv sync
+
+                test:
+                \tuv run pytest
+
+                dev: install
+                \t{stale_curl}
+                \tuv run pre-commit install
+            """)
+        )
+        assert main() == 1
+        rewritten = makefile.read_text()
+        assert "curl" in rewritten.split("dev:")[1].split("\n")[1]
+        assert "pdk-ci-workflow-public" in rewritten
+
+    def test_dev_gh_api_passes(self, pdk_root: Path) -> None:
+        """dev target using gh api passes without error."""
+        (pdk_root / "Makefile").write_text(
+            textwrap.dedent("""\
+                install:
+                \tuv sync
+
+                test:
+                \tuv run pytest
+
+                dev: install
+                \tgh api "repos/doplaydo/pdk-ci-workflow-public/contents/templates/.pre-commit-config.yaml?ref=main" --header "Accept: application/vnd.github.raw+json" > .pre-commit-config.yaml
+                \tuv run pre-commit install
+            """)
+        )
+        assert main() == 0
+
+    def test_dev_curl_already_public_passes(self, pdk_root: Path) -> None:
+        """dev target already fetching the canonical public repo passes without rewrite."""
+        (pdk_root / "Makefile").write_text(
+            textwrap.dedent("""\
+                install:
+                \tuv sync
+    
+                test:
+                \tuv run pytest
+    
+                dev: install
+                \tcurl -sf https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/templates/.pre-commit-config.yaml -o .pre-commit-config.yaml
+                \tuv run pre-commit install
+            """)
+        )
+        assert main() == 0
