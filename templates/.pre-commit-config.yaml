@@ -10,6 +10,11 @@
 # PDK repos needing custom overrides (e.g. check-yaml exclude) can add
 # per-hook settings below without changing this file's single-repo structure.
 
+# references/ holds vendor-supplied fixture data (netlists, blueprints, sim
+# output) that must stay byte-identical to the upstream source — pre-commit
+# hooks must not lint, reformat, or reject it.
+exclude: ^references/
+
 repos:
   - repo: https://github.com/doplaydo/pdk-ci-workflow-public
     rev: main

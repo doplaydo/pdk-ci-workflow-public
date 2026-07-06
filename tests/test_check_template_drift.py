@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -27,33 +26,40 @@ class TestCheckTemplateDrift:
 
         if (pdk_root / ".github").exists():
             shutil.rmtree(pdk_root / ".github")
-        
+
         # Should fail because it creates them
         assert main() == 1
-        
+
         # Verify at least one was created
         from hooks.check_template_drift import TEMPLATES
+
         assert (pdk_root / TEMPLATES[0]).exists()
 
     def test_matching_template_passes(self, pdk_root: Path) -> None:
         """If local file matches the template exactly, hook passes."""
         from importlib.resources import files
         from hooks.check_template_drift import TEMPLATES
+        from hooks._utils import apply_sync_markers
 
         root = files("templates")
 
         # Ensure ALL template files exist locally and match the template
+        # (the resolved, private-view content — the same text _enforce_template
+        # itself writes — not the raw canonical source with markers intact).
         for rel in TEMPLATES:
             local = pdk_root / rel
             local.parent.mkdir(parents=True, exist_ok=True)
-            
+
             parts = rel.split("/")
             src = root
             for p in parts:
                 src = src.joinpath(p)
-            
+
             if src.is_file():
-                local.write_text(src.read_text(encoding="utf-8"))
+                resolved = apply_sync_markers(
+                    src.read_text(encoding="utf-8"), keep="private"
+                )
+                local.write_text(resolved)
 
         assert main() == 0
 
@@ -61,6 +67,7 @@ class TestCheckTemplateDrift:
         """A drifted file should be rewritten and hook should return 1."""
         from importlib.resources import files
         from hooks.check_template_drift import TEMPLATES
+        from hooks._utils import apply_sync_markers
 
         root = files("templates")
 
@@ -81,7 +88,11 @@ class TestCheckTemplateDrift:
                 result = main()
                 assert result == 1
                 # After rewrite, local file should match template
-                assert local.read_text() == src.read_text(encoding="utf-8")
+                # (the resolved, private-view content — the same text _enforce_template writes)
+                resolved = apply_sync_markers(
+                    src.read_text(encoding="utf-8"), keep="private"
+                )
+                assert local.read_text() == resolved
                 return
 
         pytest.skip("No template files found in package")
@@ -92,7 +103,7 @@ class TestCheckTemplateDrift:
         from hooks.check_template_drift import TEMPLATES
 
         root = files("templates")
-        
+
         # To ensure the second run passes, we must handle ALL templates
         for rel in TEMPLATES:
             local = pdk_root / rel
@@ -103,3 +114,31 @@ class TestCheckTemplateDrift:
         assert main() == 1
         # Second run: should pass (all match now)
         assert main() == 0
+
+
+class TestSyncMarkerStripping:
+    def test_markers_stripped_from_enforced_content(self, pdk_root: Path) -> None:
+        """Downstream PDK repos never see literal SYNC-PRIVATE/SYNC-PUBLIC marker text."""
+        from importlib.resources import files
+        from hooks.check_template_drift import TEMPLATES, main
+
+        root = files("templates")
+
+        for rel in TEMPLATES:
+            local = pdk_root / rel
+            local.parent.mkdir(parents=True, exist_ok=True)
+            parts = rel.split("/")
+            src = root
+            for p in parts:
+                src = src.joinpath(p)
+            if src.is_file():
+                # Force drift so _enforce_template rewrites the local file.
+                local.write_text("stale content\n")
+
+        main()
+
+        for rel in TEMPLATES:
+            local = pdk_root / rel
+            if local.exists():
+                assert "SYNC-PRIVATE:" not in local.read_text()
+                assert "SYNC-PUBLIC:" not in local.read_text()
