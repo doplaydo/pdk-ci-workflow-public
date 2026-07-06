@@ -76,6 +76,27 @@ def main() -> int:
                 "consider migrating to 'uv build' or 'python -m build'"
             )
 
+    if "dev" in targets:
+        body = targets["dev"]
+        curl_line = re.compile(
+            r"^\t[^\n]*curl[^\n]*pdk-ci-workflow[^\n]*pre-commit-config\.yaml[^\n]*$",
+            re.MULTILINE,
+        )
+        match = curl_line.search(body)
+        if match:
+            # pdk-ci-workflow-public is public — plain curl needs no auth
+            replacement_line = (
+                "\tcurl -sf"
+                " https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/templates/.pre-commit-config.yaml"
+                " -o .pre-commit-config.yaml"
+            )
+            if match.group(0) != replacement_line:
+                new_content = curl_line.sub(replacement_line, content)
+                makefile.write_text(new_content)
+                result.error(
+                    "rewrote Makefile dev target: normalized pre-commit config fetch command"
+                )
+
     return result.report()
 
 
