@@ -28,6 +28,18 @@ def load_toml(path: str = "pyproject.toml") -> dict[str, Any] | None:
         return tomllib.load(f)
 
 
+def is_self_repo() -> bool:
+    """True when running inside pdk-ci-workflow itself.
+
+    This repo's `.github/` holds REUSABLE source workflows (not thin
+    callers) and there is no upstream pdk-ci-workflow to compare against
+    itself, so hooks that enforce PDK-repo conventions must no-op here.
+    Identified by `pyproject.toml` project name.
+    """
+    data = load_toml("pyproject.toml")
+    return bool(data and data.get("project", {}).get("name") == "ci-pdk-workflows")
+
+
 def load_yaml(path: str) -> dict[str, Any] | None:
     """Load and parse a YAML file. Returns None if the file doesn't exist."""
     p = Path(path)

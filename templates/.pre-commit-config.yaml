@@ -35,6 +35,7 @@ repos:
       - id: check-no-main-in-cells
       - id: check-precommit-config
       - id: check-template-drift
+      - id: check-hook-freshness
       # Code quality (versions controlled by pdk-ci-workflow-public)
       - id: trailing-whitespace
       - id: end-of-file-fixer

@@ -34,6 +34,7 @@ Each hook is a self-contained Python script that validates some aspect of a PDK 
 | `check-workflows` | `check_workflows.py` | `.github/workflows/` has test_code.yml (or test.yml) with pre-commit job and test job; recommends release.yml |
 | `check-precommit-config` | `check_precommit_config.py` | `.pre-commit-config.yaml` includes required hooks (end-of-file-fixer, trailing-whitespace, ruff or ruff-lint, ruff-format) and recommended hooks (nbstripout, codespell) |
 | `check-template-drift` | `check_template_drift.py` | Enforces `.github/dependabot.yml`, `.github/release-drafter.yml`, and `.github/workflows/*.yml` thin callers match upstream `templates/`. Ruff-style auto-fix: missing or drifted files are rewritten from the canonical template, exit 1; re-run exits 0. Conditionally enforces `sample-projects.yml` only in repos containing a `*--sample-projects/` directory. No-ops inside pdk-ci-workflow itself. |
+| `check-hook-freshness` | `check_hook_freshness.py` | Detects a stale local pre-commit cache: compares the commit the installed hook checkout was cloned from (via the `.git` directory pre-commit leaves alongside the installed venv) against the current tip of this hook repo's `main`, and fails with instructions to run `pre-commit clean` if they differ. Warns instead of failing when offline or the check can't be determined. No-ops inside pdk-ci-workflow itself. |
 
 ### Multi-band
 
