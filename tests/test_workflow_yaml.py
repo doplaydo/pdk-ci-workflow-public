@@ -60,9 +60,9 @@ class TestCentralWorkflowYaml:
             # If the workflow has workflow_call, verify it's valid
             if isinstance(on, dict) and "workflow_call" in on:
                 # workflow_call can be None or a dict — both are acceptable
-                assert isinstance(
-                    on["workflow_call"], (type(None), dict)
-                ), f"{path.name}: workflow_call value must be null or a mapping"
+                assert isinstance(on["workflow_call"], (type(None), dict)), (
+                    f"{path.name}: workflow_call value must be null or a mapping"
+                )
 
     def test_every_workflow_has_name(self) -> None:
         for path in _all_workflow_files(WORKFLOWS_DIR):
@@ -135,3 +135,5 @@ class TestTemplateWorkflowYaml:
                     f"{path.name} job '{job_name}' uses '{uses}' which does "
                     f"not reference {allowed_orgs}"
                 )
+
+
