@@ -14,6 +14,7 @@ version = "0.1.0"
 
 [project.scripts]
 check_cells_structure = "hooks.check_cells_structure:main"
+check_hook_freshness = "hooks.check_hook_freshness:main"
 check_makefile_targets = "hooks.check_makefile_targets:main"
 check_multi_band = "hooks.check_multi_band:main"
 check_no_main_in_cells = "hooks.check_no_main_in_cells:main"

@@ -60,9 +60,9 @@ class TestCentralWorkflowYaml:
             # If the workflow has workflow_call, verify it's valid
             if isinstance(on, dict) and "workflow_call" in on:
                 # workflow_call can be None or a dict — both are acceptable
-                assert isinstance(
-                    on["workflow_call"], (type(None), dict)
-                ), f"{path.name}: workflow_call value must be null or a mapping"
+                assert isinstance(on["workflow_call"], (type(None), dict)), (
+                    f"{path.name}: workflow_call value must be null or a mapping"
+                )
 
     def test_every_workflow_has_name(self) -> None:
         for path in _all_workflow_files(WORKFLOWS_DIR):
@@ -135,3 +135,55 @@ class TestTemplateWorkflowYaml:
                     f"{path.name} job '{job_name}' uses '{uses}' which does "
                     f"not reference {allowed_orgs}"
                 )
+
+
+# ── pre-commit token-check gating (regression for #240) ────────────
+
+
+class TestPreCommitTokenGate:
+    """Regression test for #240.
+
+    The `token-check` step in the `pre-commit` job must only skip
+    pre-commit (green, warning) when the actor is Dependabot. For any
+    other actor, a missing token must fail the job loudly instead of
+    silently skipping — see doplaydo/pdk-ci-workflow#240.
+    """
+
+    def _token_check_step(self) -> dict[str, Any]:
+        data = _load_yaml(WORKFLOWS_DIR / "test_code.yml")
+        steps = data["jobs"]["pre-commit"]["steps"]
+        for step in steps:
+            if step.get("id") == "token-check":
+                return step
+        raise AssertionError(
+            "no step with id 'token-check' found in the pre-commit job"
+        )
+
+    def test_token_check_distinguishes_dependabot_actor(self) -> None:
+        run = self._token_check_step()["run"]
+        assert "dependabot[bot]" in run, (
+            "token-check must gate the skip path on the Dependabot "
+            "actor, not on token-presence alone"
+        )
+
+    def test_token_check_fails_for_non_dependabot_missing_token(self) -> None:
+        run = self._token_check_step()["run"]
+        assert "exit 1" in run, (
+            "token-check must fail (exit 1) when the token is missing "
+            "for a non-Dependabot actor, instead of silently skipping"
+        )
+
+    def test_token_check_still_warns_on_dependabot_skip(self) -> None:
+        run = self._token_check_step()["run"]
+        assert "::warning::" in run
+
+    def test_token_check_errors_on_non_dependabot_failure(self) -> None:
+        run = self._token_check_step()["run"]
+        assert "::error::" in run
+
+    def test_token_check_uses_github_actor_env(self) -> None:
+        env = self._token_check_step().get("env", {})
+        assert env.get("ACTOR") == "${{ github.actor }}", (
+            "token-check needs the actor available as $ACTOR to "
+            "branch on it in the run script"
+        )
