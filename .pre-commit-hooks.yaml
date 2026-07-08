@@ -155,6 +155,18 @@
     pdk-ci-workflow. Ruff-style auto-fix: on drift, rewrites local file
     from template and exits 1; second run exits 0.
 
+- id: check-hook-freshness
+  name: Check pre-commit hook cache freshness
+  entry: check_hook_freshness
+  language: python
+  always_run: true
+  pass_filenames: false
+  description: >
+    Detects a stale local pre-commit cache: compares the commit this
+    installed hook checkout was cloned from against the current tip of
+    this hook repo's main branch and fails if they differ. Warns
+    (doesn't fail) when offline or the check can't be determined.
+
 # =============================================================================
 # Third-party wrapper hooks
 #

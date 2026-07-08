@@ -14,7 +14,7 @@ import sys
 from importlib.resources import files
 from pathlib import Path
 
-from hooks._utils import CheckResult, apply_sync_markers, load_toml
+from hooks._utils import CheckResult, apply_sync_markers, is_self_repo
 
 # Paths (relative to PDK repo root) that must match the upstream template of
 # the same relative path under `templates/` in pdk-ci-workflow.
@@ -64,17 +64,6 @@ def _diff(old: str, new: str, path: str) -> str:
     )
 
 
-def _is_self_repo() -> bool:
-    """Skip when running inside pdk-ci-workflow itself.
-
-    This repo's `.github/` holds REUSABLE source workflows (not thin callers),
-    so enforcing template content would clobber them. Identified by
-    `pyproject.toml` project name.
-    """
-    data = load_toml("pyproject.toml")
-    return bool(data and data.get("project", {}).get("name") == "ci-pdk-workflows")
-
-
 def _enforce_template(rel: str, root, result: CheckResult) -> None:
     parts = rel.split("/")
     src = root
@@ -106,7 +95,7 @@ def _enforce_template(rel: str, root, result: CheckResult) -> None:
 def main() -> int:
     result = CheckResult("check-template-drift")
 
-    if _is_self_repo():
+    if is_self_repo():
         return 0
 
     root = files("templates")
