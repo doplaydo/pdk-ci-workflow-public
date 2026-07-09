@@ -33,8 +33,11 @@ Minimal wrappers — each calls the upstream reusable workflow and forwards secr
 ```makefile
 dev: install
 	curl -sf https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/templates/.pre-commit-config.yaml -o .pre-commit-config.yaml
+	uv run pre-commit clean
 	uv run pre-commit install
 ```
+
+- **If `git commit` fails with `` `<hook-id>` is not present in repository https://github.com/doplaydo/pdk-ci-workflow-public ``:** your local pre-commit cache predates a hook that was added upstream. Run `pre-commit clean && make dev` — do **not** run `pre-commit autoupdate`, it does not work for the mutable `rev: main` pin and will not fix this.
 
 ## Other Config
 
