@@ -1,0 +1,520 @@
+name: Release
+
+on:
+  workflow_call:
+    inputs:
+      checkout_ref:
+        type: string
+        required: true
+        description: 'Exact SHA that passed CI on the release branch — every job builds from this commit'
+      head_branch:
+        type: string
+        required: true
+        description: 'Name of the release branch, e.g. release/1.2.3'
+    secrets:
+      DEVPI_USERNAME:
+        required: false
+      DEVPI_PASSWORD:
+        required: false
+      PYPI_USERNAME:
+        required: false
+      PYPI_PASSWORD:
+        required: false
+      GFP_API_KEY:
+        required: false
+      SIMCLOUD_APIKEY:
+        required: false
+      PDK_CI_WORKFLOW_TOKEN:
+        required: false
+
+env:
+  GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
+  SIMCLOUD_APIKEY: ${{ secrets.SIMCLOUD_APIKEY }}
+
+jobs:
+  # ════════════════════════════════════════════════════════════════════
+  # Validate the release branch, load per-repo config, and push the tag.
+  # The version-bump commit is created at branch-cut time (cut-release.yml),
+  # so inputs.checkout_ref — the SHA CI actually tested — already carries
+  # the new version. This job never rewrites history: it only tags that SHA.
+  # Self-heals branches cut by hand without a bump commit (pushes one and
+  # stops; the CI re-run re-triggers this workflow). Idempotent: no-ops
+  # when the tag already exists. Warns (never blocks) if main wasn't green.
+  # ════════════════════════════════════════════════════════════════════
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+      tag: ${{ steps.extract.outputs.tag }}
+      proceed: ${{ steps.gate.outputs.proceed }}
+      config: ${{ steps.config.outputs.json }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.head_branch }}
+          fetch-depth: 0
+          # github.token: always has read/write access to the calling repo.
+          # PDK_CI_WORKFLOW_TOKEN is scoped to pdk-ci-workflow only and cannot
+          # read/write the calling PDK repo.
+          token: ${{ github.token }}
+
+      # Stay ON the branch (not a detached-SHA checkout) so the self-heal
+      # step can push, while pinning the tree to the exact commit CI tested.
+      - name: Pin to the exact commit that passed CI
+        run: git reset --hard ${{ inputs.checkout_ref }}
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Extract version from branch name
+        id: extract
+        run: |
+          branch="${{ inputs.head_branch }}"
+          version="${branch#release/}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?(-[0-9A-Za-z.]+)?(\+[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Invalid version format extracted from branch '$branch': '$version'"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Load release config from pyproject.toml
+        id: config
+        run: |
+          json=$(python3 <<'PYEOF'
+          import json
+          import tomllib
+
+          with open("pyproject.toml", "rb") as f:
+              data = tomllib.load(f)
+
+          cfg = data.get("tool", {}).get("pdk-ci-workflow", {}).get("release", {})
+          defaults = {
+              "target": "private",
+              "build_pdf": False,
+              "pdf_filename_prefix": "docs",
+              "upload_uv_lock": False,
+              "upload_requirements_txt": False,
+              "ligentec_release_style": False,
+              # Must create the bump commit locally, WITHOUT tagging or
+              # pushing — the workflows push. Keep this default in sync
+              # with the copy in cut-release.yml.
+              "bump_command": "tbump {version} --non-interactive --no-tag --no-push",
+              "pre_build_command": "make rm-samples",
+              "use_just": False,
+              "cibw_environment_macos": "",
+              "windows_arm": False,
+              "checkout_submodules": "false",
+              "pypi_build_command": "make build",
+              "pypi_use_docker": False,
+              "pdf_install_command": "make dev",
+              # Contract: must leave `docs.pdf` at the repo root.
+              "pdf_build_command": "make docs-pdf",
+              "pdf_apt_packages": [
+                  "texlive-latex-extra",
+                  "texlive-fonts-extra",
+                  "texlive-xetex",
+                  "latexmk",
+                  "xindy",
+              ],
+          }
+          merged = {**defaults, **cfg}
+          print(json.dumps(merged))
+          PYEOF
+          )
+          echo "json=$json" >> "$GITHUB_OUTPUT"
+
+      - name: Gate — skip if already released, self-heal if branch was never bumped
+        id: gate
+        run: |
+          version="${{ steps.extract.outputs.version }}"
+          tag="${{ steps.extract.outputs.tag }}"
+          if git ls-remote --tags origin "refs/tags/$tag" | grep -q .; then
+            echo "Tag $tag already exists — skipping bump/build/publish (idempotent re-trigger)."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          actual=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$actual" != "$version" ]; then
+            # The branch was cut by hand without a bump commit. Push one now
+            # and stop — the PAT push re-runs "Test code", which re-triggers
+            # this workflow on the bumped SHA, and versions will then match.
+            echo "pyproject version is '$actual' but branch wants '$version' — pushing a bump commit."
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            pip install tbump towncrier
+            cmd=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['bump_command'])" '${{ steps.config.outputs.json }}')
+            cmd="${cmd//\{version\}/$version}"
+            echo "Running: $cmd"
+            eval "$cmd"
+            if ! git diff --quiet || ! git diff --cached --quiet; then
+              git add -A
+              git commit -m "chore: bump version to $version"
+            fi
+            healed=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+            if [ "$healed" != "$version" ]; then
+              echo "::error::bump_command ran but [project] version is still '$healed' (wanted '$version') — check [tool.tbump] config"
+              exit 1
+            fi
+            git push origin "HEAD:refs/heads/${{ inputs.head_branch }}"
+            echo "Bump commit pushed — CI will re-run and re-trigger the release. Stopping this run."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Check main branch CI health
+        id: main_health
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          all_ok=$(gh api "repos/${{ github.repository }}/commits/main/check-runs" \
+            --jq '[.check_runs[].conclusion] | all(. == "success" or . == "skipped" or . == "neutral")') || all_ok=false
+          echo "main_green=$all_ok" >> "$GITHUB_OUTPUT"
+
+      - name: Warn on PR if main was not green
+        if: steps.gate.outputs.proceed == 'true' && steps.main_health.outputs.main_green != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr_number=$(gh pr list --repo "${{ github.repository }}" --head "${{ inputs.head_branch }}" --json number --jq '.[0].number')
+          if [ -n "$pr_number" ]; then
+            gh pr comment "$pr_number" --repo "${{ github.repository }}" --body "⚠️ **Release warning:** \`main\`'s last CI run was not fully green when this release was auto-triggered. The release is proceeding anyway — double-check before treating it as trustworthy."
+          fi
+
+      - name: Tag the release at the CI-tested commit
+        if: steps.gate.outputs.proceed == 'true'
+        run: |
+          git tag "${{ steps.extract.outputs.tag }}"
+          git push origin "refs/tags/${{ steps.extract.outputs.tag }}"
+
+  # ════════════════════════════════════════════════════════════════════
+  # Build wheels (private and pypi-trusted targets)
+  # ════════════════════════════════════════════════════════════════════
+  build-wheels:
+    # Runs for "private", "pypi-trusted", AND plain "pypi" (non-docker).
+    # All three targets ship cibuildwheel-compiled wheels; only the upload
+    # destination and auth differ (CodeArtifact, OIDC, or twine creds).
+    # The docker variant builds inside a container and skips this job.
+    if: |
+      needs.prepare.outputs.proceed == 'true' &&
+      (fromJSON(needs.prepare.outputs.config).target == 'private' || fromJSON(needs.prepare.outputs.config).target == 'pypi-trusted' || (fromJSON(needs.prepare.outputs.config).target == 'pypi' && !fromJSON(needs.prepare.outputs.config).pypi_use_docker))
+    needs: prepare
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cibw_archs: 'native'
+          - os: ubuntu-arm-2core
+            cibw_archs: 'aarch64'
+          - os: windows-latest
+            cibw_archs: >-
+              ${{ fromJSON(needs.prepare.outputs.config).windows_arm && 'native ARM64' || 'native' }}
+          - os: macos-latest
+            # Explicit, not 'native arm64': on Apple Silicon runners
+            # 'native' == arm64, which would silently skip x86_64 wheels.
+            cibw_archs: 'x86_64 arm64'
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.checkout_ref }}
+          submodules: ${{ fromJSON(needs.prepare.outputs.config).checkout_submodules }}
+
+      - if: fromJSON(needs.prepare.outputs.config).use_just
+        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+
+      - name: Pre-build
+        if: fromJSON(needs.prepare.outputs.config).pre_build_command != ''
+        run: ${{ fromJSON(needs.prepare.outputs.config).pre_build_command }}
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@faf86a6ed7efa889faf6996aa23820831055001a # v3.3.1
+        env:
+          CIBW_ARCHS: ${{ matrix.cibw_archs }}
+          CIBW_SKIP: '*-musllinux* pp*'
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
+          CIBW_ENVIRONMENT_MACOS: ${{ fromJSON(needs.prepare.outputs.config).cibw_environment_macos }}
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wheels-${{ matrix.os }}
+          path: ./wheelhouse/*.whl
+
+  # ════════════════════════════════════════════════════════════════════
+  # Build PDF documentation (optional). Filename uses the version from the
+  # branch name, never github.ref_name (the raw-ref_name-in-path bug broke
+  # smart-photonics#36). pdf_build_command must leave `docs.pdf` at the
+  # repo root — that's the contract, documented in templates/README.md.
+  # ════════════════════════════════════════════════════════════════════
+  build-doc-pdf:
+    if: needs.prepare.outputs.proceed == 'true' && fromJSON(needs.prepare.outputs.config).build_pdf
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.checkout_ref }}
+          submodules: ${{ fromJSON(needs.prepare.outputs.config).checkout_submodules }}
+
+      - if: fromJSON(needs.prepare.outputs.config).use_just
+        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+
+      - name: Pre-build
+        if: fromJSON(needs.prepare.outputs.config).pre_build_command != ''
+        run: ${{ fromJSON(needs.prepare.outputs.config).pre_build_command }}
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+
+      - name: Install dependencies
+        env:
+          GH_TOKEN: ${{ secrets.PDK_CI_WORKFLOW_TOKEN || github.token }}
+        run: |
+          sudo apt-get update
+          ${{ fromJSON(needs.prepare.outputs.config).pdf_install_command }}
+          echo '${{ needs.prepare.outputs.config }}' | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin)['pdf_apt_packages']))" | xargs sudo apt-get install -y
+
+      - name: Build PDF
+        run: |
+          ${{ fromJSON(needs.prepare.outputs.config).pdf_build_command }}
+          mv docs.pdf ${{ fromJSON(needs.prepare.outputs.config).pdf_filename_prefix }}-${{ needs.prepare.outputs.version }}.pdf
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docs
+          path: ./${{ fromJSON(needs.prepare.outputs.config).pdf_filename_prefix }}-${{ needs.prepare.outputs.version }}.pdf
+
+  # ════════════════════════════════════════════════════════════════════
+  # Release to the private prod registry. The destination org UUID comes
+  # from the caller repo's Actions variable RELEASE_PRIVATE_ORG_ID — org
+  # UUIDs are customer identifiers that must never live in pyproject.toml
+  # (which ships inside the wheel/sdist) and must never leak to the public
+  # mirror, hence SYNC-PRIVATE below.
+  # NOTE: the endpoint below is devpi-shaped but proxies to AWS CodeArtifact
+  # server-side (see DataLab#1532) — secret names kept as DEVPI_* for now.
+  # ════════════════════════════════════════════════════════════════════
+  release-private:
+    if: needs.prepare.outputs.proceed == 'true' && fromJSON(needs.prepare.outputs.config).target == 'private'
+    needs: [prepare, build-wheels]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v8
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+
+  # ════════════════════════════════════════════════════════════════════
+  # Release to PyPI (standard twine upload — cibuildwheel wheels)
+  # Mirrors release-private but uploads to PyPI with username/password.
+  # ════════════════════════════════════════════════════════════════════
+  release-pypi:
+    if: needs.prepare.outputs.proceed == 'true' && fromJSON(needs.prepare.outputs.config).target == 'pypi' && !fromJSON(needs.prepare.outputs.config).pypi_use_docker
+    needs: [prepare, build-wheels]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v8
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+        run: |
+          pip install twine
+          twine upload dist/*
+
+  # ════════════════════════════════════════════════════════════════════
+  # Release to PyPI (Docker container variant)
+  # ════════════════════════════════════════════════════════════════════
+  release-pypi-docker:
+    if: needs.prepare.outputs.proceed == 'true' && fromJSON(needs.prepare.outputs.config).target == 'pypi' && fromJSON(needs.prepare.outputs.config).pypi_use_docker
+    needs: prepare
+    runs-on: ubuntu-latest
+    container: ghcr.io/gdsfactory/gdsfactory:main
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.checkout_ref }}
+          submodules: ${{ fromJSON(needs.prepare.outputs.config).checkout_submodules }}
+
+      - if: fromJSON(needs.prepare.outputs.config).use_just
+        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+
+      - name: Pre-build
+        if: fromJSON(needs.prepare.outputs.config).pre_build_command != ''
+        run: ${{ fromJSON(needs.prepare.outputs.config).pre_build_command }}
+
+      - name: Build and publish
+        env:
+          TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install setuptools wheel twine
+          ${{ fromJSON(needs.prepare.outputs.config).pypi_build_command }}
+          twine upload dist/*
+
+  # ════════════════════════════════════════════════════════════════════
+  # Release to PyPI (trusted publisher / OIDC). Downloads the same
+  # "wheels-*" artifacts build-wheels produces; no user/password —
+  # id-token: write is the whole point.
+  # ════════════════════════════════════════════════════════════════════
+  release-pypi-trusted:
+    if: needs.prepare.outputs.proceed == 'true' && fromJSON(needs.prepare.outputs.config).target == 'pypi-trusted'
+    needs: [prepare, build-wheels]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v8
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+      - uses: pypa/gh-action-pypi-publish@76f52bc884231f62b54f72e44af3222aff7e3a45 # release/v1
+        with:
+          packages-dir: dist
+
+  # ════════════════════════════════════════════════════════════════════
+  # Publish the GitHub Release. Edits the release-drafter-authored draft
+  # (release-drafter.yml keeps one running "next version" draft on every
+  # push to main) rather than assuming a fresh `gh release create` is
+  # needed. ligentec_release_style additionally deletes+recreates instead
+  # of editing, for repos that need that pattern.
+  #
+  # Needs build-doc-pdf so the "Download PDF" step below can't start before
+  # the (slow, full TeX Live) PDF build finishes — a skipped build-doc-pdf
+  # job still satisfies the `if:` gate below, so it never skip-cascades this
+  # job. Otherwise only needs the target-specific publish job that actually
+  # ran for this release target (never an unconditionally-required job).
+  # ════════════════════════════════════════════════════════════════════
+  github-release:
+    needs:
+      - prepare
+      - build-wheels
+      - build-doc-pdf
+      - release-private
+      - release-pypi
+      - release-pypi-docker
+      - release-pypi-trusted
+    # `always()` because upstream jobs that didn't match this release target
+    # are `skipped`, not `success` — GitHub Actions' default `needs` gate
+    # requires success on every listed job, so without `always()` this job
+    # would itself always skip. The explicit per-job checks below replace
+    # that implicit gate with "success or legitimately skipped".
+    if: |
+      always() &&
+      needs.prepare.outputs.proceed == 'true' &&
+      needs.prepare.result == 'success' &&
+      (needs.build-wheels.result == 'success' || needs.build-wheels.result == 'skipped') &&
+      (needs.build-doc-pdf.result == 'success' || needs.build-doc-pdf.result == 'skipped') &&
+      (needs.release-private.result == 'success' || needs.release-private.result == 'skipped') &&
+      (needs.release-pypi.result == 'success' || needs.release-pypi.result == 'skipped') &&
+      (needs.release-pypi-docker.result == 'success' || needs.release-pypi-docker.result == 'skipped') &&
+      (needs.release-pypi-trusted.result == 'success' || needs.release-pypi-trusted.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.checkout_ref }}
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Download wheels
+        if: fromJSON(needs.prepare.outputs.config).target == 'private'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v8
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download PDF
+        if: fromJSON(needs.prepare.outputs.config).build_pdf
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v8
+        with:
+          name: docs
+          path: dist
+
+      - name: Publish release (default style)
+        if: '!fromJSON(needs.prepare.outputs.config).ligentec_release_style'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          draft_tag=$(gh release list --limit 100 --json isDraft,tagName --jq '[.[] | select(.isDraft)][0].tagName // empty')
+          if [ -n "$draft_tag" ]; then
+            echo "Retargeting draft '$draft_tag' to ${{ needs.prepare.outputs.tag }}"
+            gh release edit "$draft_tag" --tag ${{ needs.prepare.outputs.tag }} --title ${{ needs.prepare.outputs.tag }} --draft=false
+          else
+            echo "No draft release found, creating a fresh one"
+            gh release create ${{ needs.prepare.outputs.tag }} --title ${{ needs.prepare.outputs.tag }} --generate-notes
+          fi
+
+      - name: Publish release (ligentec draft-delete-recreate style)
+        if: fromJSON(needs.prepare.outputs.config).ligentec_release_style
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          new_version="${{ needs.prepare.outputs.version }}"
+          if gh release list --limit 100 | grep Draft; then
+            old_version="$(gh release list --limit 100 | grep Draft | head -1 | cut -f1 | sed 's/^[ ]*v//g')"
+            body=$(gh release view "v$old_version" --json body -q ".body" | sed "s/\.\.\.v$old_version/...v$new_version/g")
+            gh release delete "v$old_version" --yes
+            gh release create "v$new_version" --title "v$new_version" --notes "$body"
+          else
+            gh release create "v$new_version" --title "v$new_version"
+          fi
+
+      - name: Upload uv.lock
+        if: fromJSON(needs.prepare.outputs.config).upload_uv_lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f uv.lock ]; then
+            gh release upload ${{ needs.prepare.outputs.tag }} uv.lock --clobber
+          fi
+
+      - name: Upload requirements.txt
+        if: fromJSON(needs.prepare.outputs.config).upload_requirements_txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pip install .
+          pip freeze > requirements.txt
+          gh release upload ${{ needs.prepare.outputs.tag }} requirements.txt --clobber
+
+      - name: Upload dist artifacts to release
+        if: fromJSON(needs.prepare.outputs.config).target == 'private' || fromJSON(needs.prepare.outputs.config).build_pdf
+        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          files: dist/*

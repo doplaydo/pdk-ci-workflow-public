@@ -84,6 +84,7 @@ Add to your `Makefile`:
 ```makefile
 dev: install
 	curl -sf https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/templates/.pre-commit-config.yaml -o .pre-commit-config.yaml
+	uv run pre-commit clean
 	uv run pre-commit install
 ```
 
@@ -101,6 +102,7 @@ Then run `make dev`.
 - **Locally:** `make dev` downloads the config and installs the git hooks. Pre-commit then runs automatically on every `git commit`.
 - **Versions of all tools** (ruff, codespell, nbstripout, pretty-format-toml, etc.) are controlled centrally in this repo via `additional_dependencies`. Bumping a version here propagates to all PDK repos — no downstream PRs needed.
 - **PDK-specific overrides** (e.g. custom `check-yaml` excludes): keep a committed `.pre-commit-config.yaml` instead, still referencing pdk-ci-workflow as the only repo.
+- **If `git commit` fails with `` `<hook-id>` is not present in repository https://github.com/doplaydo/pdk-ci-workflow-public ``:** your local pre-commit cache predates a hook that was added upstream. Run `pre-commit clean && make dev` — do **not** run `pre-commit autoupdate`, it does not work for the mutable `rev: main` pin and will not fix this.
 
 ## Reusable Workflows
 
@@ -115,6 +117,8 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 | `pages.yml` | build-docs, deploy-docs | Sphinx docs build and GitHub Pages deployment |
 | `claude-pr-review.yml` | review | AI code review via Claude Sonnet 4. Runs once on PR open/reopen; re-run on demand by commenting `/claude-api review` |
 | `release-drafter.yml` | update_release_draft | Auto-drafted release notes with Claude-curated changelog |
+| `cut-release.yml` | cut-release | Manual release cut: creates a bumped `release/X.Y.Z` branch and opens the release PR |
+| `release.yml` | prepare, build-wheels, build-doc-pdf, release-private/pypi/pypi-docker/pypi-trusted, github-release | Full release pipeline on green CI: tag at the CI-tested SHA, wheels, PDF docs, registry publish, GitHub Release |
 | `drc.yml` | drc | Design Rule Check with GFP and badge generation |
 | `issue.yml` | add-label | Auto-labels issues with "pdk" tag |
 | `test_coverage.yml` | coverage | Pytest with line coverage reporting |
@@ -172,7 +176,7 @@ See [`hooks/README.md`](hooks/README.md) for detailed documentation.
 | Hook ID | What it checks |
 |---------|---------------|
 | `check-test-structure` | `tests/` directory with test files, GDS reference dirs, `difftest()` calls, `data_regression` usage |
-<!-- | `check-makefile-targets` | Required targets (install, test) and recommended targets (docs, build, test-force, update-pre, dev). Auto-fix: rewrites `dev` target's stale pre-commit-config fetch to `curl` against the public repo (exit 1; re-run exits 0) | -->
+| `check-makefile-targets` | Required targets (install, test) and recommended targets (docs, build, test-force, update-pre, dev). Auto-fix: rewrites `dev` target's stale pre-commit-config fetch to `curl` against the public repo (exit 1; re-run exits 0) |
 | `check-workflows` | `.github/workflows/` has test_code.yml with pre-commit and test jobs |
 | `check-precommit-config` | `.pre-commit-config.yaml` includes required hooks (trailing-whitespace, end-of-file-fixer, ruff or ruff-lint, ruff-format) |
 | `check-template-drift` | `.github/dependabot.yml`, `.github/release-drafter.yml`, and `.github/workflows/*.yml` thin callers match upstream templates. Auto-fixes by rewriting or creating files. Conditionally deploys `sample-projects.yml` in repos containing `*--sample-projects/` directories. |

@@ -1,0 +1,139 @@
+name: Cut release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+        description: 'Version to cut a release/<version> branch for, e.g. 1.2.3'
+    secrets:
+      PDK_CI_WORKFLOW_TOKEN:
+        required: false
+    outputs:
+      head_sha:
+        description: 'HEAD SHA of the release branch after bump commit'
+        value: ${{ jobs.cut-release.outputs.head_sha }}
+      head_branch:
+        description: 'Release branch name (release/X.Y.Z)'
+        value: ${{ jobs.cut-release.outputs.head_branch }}
+      skip_all:
+        description: 'true if the tag already exists and no work was done'
+        value: ${{ jobs.cut-release.outputs.skip_all }}
+
+jobs:
+  # ════════════════════════════════════════════════════════════════════
+  # Creates the release/X.Y.Z branch off main with the version-bump commit
+  # already on it (bump_command from [tool.pdk-ci-workflow.release], incl.
+  # any [tool.tbump.before_commit] hooks like towncrier), then opens the
+  # release PR. CI runs on the PR; when "Test code" goes green, release.yml
+  # takes over (tag, build, publish). Idempotent: skips cleanly when the
+  # branch or tag already exists, so cutting a release by hand stays supported.
+  # ════════════════════════════════════════════════════════════════════
+  cut-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      head_sha: ${{ steps.branch_info.outputs.head_sha }}
+      head_branch: ${{ steps.branch_info.outputs.head_branch }}
+      skip_all: ${{ steps.check.outputs.skip_all }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          fetch-depth: 0
+          # github.token: always has read access to the calling repo.
+          # The PAT is injected into the git remote URL before push (below)
+          # so the pushed branch triggers "Test code" — events from github.token
+          # never trigger other workflow runs.
+          token: ${{ github.token }}
+
+      - name: Validate version format
+        run: |
+          version="${{ inputs.version }}"
+          # Strip a leading 'v' — users often type v1.2.3
+          version="${version#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?(-[0-9A-Za-z.]+)?(\+[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Invalid version '$version' — expected MAJOR.MINOR.PATCH[.PATCH2] (optionally -suffix and/or +localsuffix)"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_ENV"
+
+      - name: Check for an existing branch or tag (idempotent skip)
+        id: check
+        run: |
+          branch_exists=false
+          tag_exists=false
+          git ls-remote --exit-code --heads origin "refs/heads/release/${{ env.version }}" >/dev/null 2>&1 && branch_exists=true
+          git ls-remote --exit-code --tags origin "refs/tags/v${{ env.version }}" >/dev/null 2>&1 && tag_exists=true
+          if [ "$tag_exists" = true ]; then
+            echo "v${{ env.version }} tag already exists — release already published, skipping."
+            echo "skip_all=true" >> "$GITHUB_OUTPUT"
+            echo "skip_bump=true" >> "$GITHUB_OUTPUT"
+          elif [ "$branch_exists" = true ]; then
+            echo "release/${{ env.version }} branch exists — skipping bump, will ensure PR exists."
+            echo "skip_all=false" >> "$GITHUB_OUTPUT"
+            echo "skip_bump=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip_all=false" >> "$GITHUB_OUTPUT"
+            echo "skip_bump=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: steps.check.outputs.skip_all != 'true' && steps.check.outputs.skip_bump != 'true'
+        with:
+          python-version: '3.12'
+
+      - name: Create the release branch with the bump commit
+        if: steps.check.outputs.skip_all != 'true' && steps.check.outputs.skip_bump != 'true'
+        env:
+          PAT: ${{ secrets.PDK_CI_WORKFLOW_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "release/${{ env.version }}"
+          pip install tbump towncrier
+          # Default must stay in sync with the one in release.yml's config loader.
+          cmd=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb')).get('tool',{}).get('pdk-ci-workflow',{}).get('release',{}).get('bump_command','tbump {version} --non-interactive --no-tag --no-push'))")
+          cmd="${cmd//\{version\}/${{ env.version }}}"
+          echo "Running: $cmd"
+          eval "$cmd"
+          # bump_command normally commits (tbump does); if a custom command
+          # only patched files, commit the result so the PR has a diff.
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            git add -A
+            git commit -m "chore: bump version to ${{ env.version }}"
+          fi
+          if [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then
+            echo "::error::bump_command produced no commit — the release PR would be empty (GitHub refuses PRs with no diff). Check [tool.tbump] config."
+            exit 1
+          fi
+          # Use PAT for push so the pushed branch triggers "Test code".
+          # (Events from github.token never trigger other workflow runs.)
+          if [ -n "$PAT" ]; then
+            git remote set-url origin "https://x-access-token:$PAT@github.com/${{ github.repository }}.git"
+          fi
+          git push -u origin "release/${{ env.version }}"
+
+      - name: Open the release PR (reuse if one already exists)
+        if: steps.check.outputs.skip_all != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          existing=$(gh pr list --head "release/${{ env.version }}" --json url --jq '.[0].url // empty')
+          if [ -n "$existing" ]; then
+            echo "PR already open for release/${{ env.version }}: $existing"
+          else
+            gh pr create --base main --head "release/${{ env.version }}" \
+              --title "Release ${{ env.version }}" \
+              --body "Automated release-cut for ${{ env.version }}. The version-bump commit is already on this branch. Merge this PR with **Create a merge commit** (not squash/rebase) after the release is published."
+          fi
+
+      - name: Capture release branch info for chained release job
+        id: branch_info
+        run: |
+          sha=$(git ls-remote origin "refs/heads/release/${{ env.version }}" | awk '{print $1}')
+          echo "head_sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "head_branch=release/${{ env.version }}" >> "$GITHUB_OUTPUT"

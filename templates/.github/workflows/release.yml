@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        type: string
+        required: true
+        description: 'Version to cut, e.g. 1.2.3 or v1.2.3 — creates release/<version> with the bump commit, opens a PR, then tags, builds, and publishes'
+
+jobs:
+  cut-release:
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: doplaydo/pdk-ci-workflow-public/.github/workflows/cut-release.yml@main
+    with:
+      version: ${{ inputs.version }}
+
+  release:
+    needs: [cut-release]
+    if: needs.cut-release.result == 'success' && needs.cut-release.outputs.skip_all != 'true'
+    # GitHub statically validates this job's permissions against every job
+    # in the called release.yml (regardless of `if:` gates), so this must
+    # grant the union of what those jobs request — including id-token for
+    # the OIDC pypi-trusted publish job.
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    uses: doplaydo/pdk-ci-workflow-public/.github/workflows/release.yml@main
+    with:
+      checkout_ref: ${{ needs.cut-release.outputs.head_sha }}
+      head_branch: ${{ needs.cut-release.outputs.head_branch }}
+    secrets:
+      DEVPI_USERNAME: ${{ secrets.DEVPI_USERNAME }}
+      DEVPI_PASSWORD: ${{ secrets.DEVPI_PASSWORD }}
+      PYPI_USERNAME: ${{ secrets.PYPI_USERNAME }}
+      PYPI_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+      GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
+      SIMCLOUD_APIKEY: ${{ secrets.SIMCLOUD_APIKEY }}

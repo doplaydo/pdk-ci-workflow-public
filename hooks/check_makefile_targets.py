@@ -43,7 +43,8 @@ def main() -> int:
         result.error("Makefile not found")
         return result.report()
 
-    content = makefile.read_text()
+    original_content = makefile.read_text()
+    content = original_content
     targets = _get_target_bodies(content)
     target_names = set(targets.keys())
 
@@ -78,24 +79,42 @@ def main() -> int:
 
     if "dev" in targets:
         body = targets["dev"]
+
         curl_line = re.compile(
             r"^\t[^\n]*curl[^\n]*pdk-ci-workflow[^\n]*pre-commit-config\.yaml[^\n]*$",
             re.MULTILINE,
         )
-        match = curl_line.search(body)
-        if match:
+        curl_match = curl_line.search(body)
+        if curl_match:
             # pdk-ci-workflow-public is public — plain curl needs no auth
             replacement_line = (
                 "\tcurl -sf"
                 " https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/templates/.pre-commit-config.yaml"
                 " -o .pre-commit-config.yaml"
             )
-            if match.group(0) != replacement_line:
-                new_content = curl_line.sub(replacement_line, content)
-                makefile.write_text(new_content)
+            if curl_match.group(0) != replacement_line:
+                content = curl_line.sub(replacement_line, content)
                 result.error(
                     "rewrote Makefile dev target: normalized pre-commit config fetch command"
                 )
+
+        install_line = re.compile(
+            r"^\t[^\n]*\bpre-commit install\b[^\n]*$", re.MULTILINE
+        )
+        clean_line = re.compile(r"^\t[^\n]*\bpre-commit clean\b[^\n]*$", re.MULTILINE)
+        install_match = install_line.search(body)
+        if install_match and not clean_line.search(body):
+            insertion = f"\tuv run pre-commit clean\n{install_match.group(0)}"
+            new_body = body.replace(install_match.group(0), insertion, 1)
+            content = content.replace(body, new_body, 1)
+            result.error(
+                "rewrote Makefile dev target: added `pre-commit clean` before "
+                "`pre-commit install` — a stale local hook-repo cache otherwise "
+                "hard-fails every commit once a new hook is added upstream (#244)"
+            )
+
+        if content != original_content:
+            makefile.write_text(content)
 
     return result.report()
 
