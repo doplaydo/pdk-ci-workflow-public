@@ -21,10 +21,6 @@ REQUIRED_DIRS = [
     "tests",
 ]
 
-REQUIRED_WORKFLOWS = [
-    ".github/workflows/release-drafter.yml",
-]
-
 # test_code.yml OR test.yml (quantum-rf-pdk uses test.yml)
 TEST_WORKFLOW_CANDIDATES = [
     ".github/workflows/test_code.yml",
@@ -48,10 +44,6 @@ def main() -> int:
     for d in REQUIRED_DIRS:
         if not Path(d).is_dir():
             result.error(f"Required directory missing: {d}/")
-
-    for f in REQUIRED_WORKFLOWS:
-        if not Path(f).exists():
-            result.error(f"Required workflow missing: {f}")
 
     # test_code.yml or test.yml — at least one must exist
     if not any(Path(c).exists() for c in TEST_WORKFLOW_CANDIDATES):

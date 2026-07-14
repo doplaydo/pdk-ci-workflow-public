@@ -20,14 +20,12 @@ from hooks._utils import CheckResult, apply_sync_markers, is_self_repo
 # the same relative path under `templates/` in pdk-ci-workflow.
 TEMPLATES: list[str] = [
     ".github/dependabot.yml",
-    ".github/release-drafter.yml",
     ".github/workflows/claude-pr-review.yml",
     ".github/workflows/drc.yml",
     ".github/workflows/issue.yml",
     ".github/workflows/model_coverage.yml",
     ".github/workflows/model_regression.yml",
     ".github/workflows/pages.yml",
-    ".github/workflows/release-drafter.yml",
     ".github/workflows/test_code.yml",
     ".github/workflows/test_coverage.yml",
     ".github/workflows/update_badges.yml",
@@ -43,6 +41,8 @@ TEMPLATES: list[str] = [
 DEPRECATED_TEMPLATES: list[str] = [
     "build_cell.py",
     "sync_changelog.py",
+    ".github/release-drafter.yml",
+    ".github/workflows/release-drafter.yml",
 ]
 
 # Templates enforced only when a matching directory glob exists in the PDK repo.
