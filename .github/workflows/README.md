@@ -13,7 +13,7 @@ PDK repos create thin wrapper workflows that call these and forward secrets expl
 | `test-sample-projects.yml` | discover, test, notebooks, drc | `GFP_API_KEY` | Auto-discovers `*--sample-projects/` dirs; runs unit tests, notebook execution, and DRC per project |
 | `pages.yml` | build-docs, deploy-docs | `GFP_API_KEY`, `SIMCLOUD_APIKEY`, `PDK_CI_WORKFLOW_TOKEN` | Sphinx docs build and GitHub Pages deployment |
 | `claude-pr-review.yml` | review | `ANTHROPIC_API_KEY` | AI code review via Claude Sonnet 4. Auto-runs on PR open/reopen; re-runs only when a human posts `/claude-api review` on the PR |
-| `release-drafter.yml` | update_release_draft | `GITHUB_TOKEN`, `ANTHROPIC_API_KEY` | Auto-drafted release notes with Claude-curated changelog |
+| `cut-release.yml` | cut-release | `PDK_CI_WORKFLOW_TOKEN`, `ANTHROPIC_API_KEY` | Creates a bumped `release/X.Y.Z` branch + PR, with a generated changelog commit |
 | `drc.yml` | drc | `GFP_API_KEY`, `PDK_CI_WORKFLOW_TOKEN` | Design Rule Check with badge generation |
 | `issue.yml` | add-label | `GITHUB_TOKEN` | Auto-labels issues with the `pdk` tag plus a per-repository `pdk:<repo-name>` tag |
 | `test_coverage.yml` | coverage | `GFP_API_KEY` | Pytest with line coverage reporting |
