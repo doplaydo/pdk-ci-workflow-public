@@ -115,6 +115,135 @@ class TestCheckTemplateDrift:
         # Second run: should pass (all match now)
         assert main() == 0
 
+    def test_deprecated_release_drafter_files_get_deleted(self, pdk_root: Path) -> None:
+        """release-drafter files, if still present locally, get force-deleted."""
+        stale_workflow = pdk_root / ".github" / "workflows" / "release-drafter.yml"
+        stale_config = pdk_root / ".github" / "release-drafter.yml"
+        stale_workflow.parent.mkdir(parents=True, exist_ok=True)
+        stale_workflow.write_text("# stale\n")
+        stale_config.write_text("# stale\n")
+
+        assert main() == 1
+        assert not stale_workflow.exists()
+        assert not stale_config.exists()
+
+    def test_forbidden_env_files_get_deleted(self, pdk_root: Path) -> None:
+        """.env and .env.local, if actually committed, get force-deleted."""
+        import subprocess
+
+        env_file = pdk_root / ".env"
+        env_local_file = pdk_root / ".env.local"
+        env_file.write_text("SECRET=shh\n")
+        env_local_file.write_text("SECRET=shh\n")
+
+        subprocess.run(["git", "init", "-q"], cwd=pdk_root, check=True)
+        # -f: force-add regardless of the developer machine's global gitignore
+        # (e.g. a global core.excludesfile commonly ignores .env); the test
+        # needs these files genuinely tracked, independent of local git config.
+        subprocess.run(
+            ["git", "add", "-f", ".env", ".env.local"], cwd=pdk_root, check=True
+        )
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.email=test@test.com",
+                "-c",
+                "user.name=test",
+                "commit",
+                "-q",
+                "-m",
+                "add env files",
+            ],
+            cwd=pdk_root,
+            check=True,
+        )
+
+        assert main() == 1
+        assert not env_file.exists()
+        assert not env_local_file.exists()
+
+    def test_untracked_env_file_is_not_deleted(self, pdk_root: Path) -> None:
+        """An on-disk .env that was never committed (e.g. gitignored) must survive.
+
+        This is the regression the git-tracked gate exists to prevent: a repo
+        that correctly gitignores `.env` and uses it locally must not lose it
+        the next time pre-commit runs.
+        """
+        import subprocess
+
+        env_file = pdk_root / ".env"
+        env_file.write_text("SECRET=shh\n")
+
+        # A git repo exists (pre-commit always runs inside one) but the file
+        # itself was never staged/committed -- e.g. it's gitignored.
+        subprocess.run(["git", "init", "-q"], cwd=pdk_root, check=True)
+
+        main()
+
+        assert env_file.exists()
+        assert env_file.read_text() == "SECRET=shh\n"
+
+    def test_forbidden_file_message_is_distinct_from_deprecated_template(
+        self, pdk_root: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The forbidden-file message must not reuse "deprecated template" wording."""
+        import subprocess
+
+        (pdk_root / ".env").write_text("SECRET=shh\n")
+        subprocess.run(["git", "init", "-q"], cwd=pdk_root, check=True)
+        subprocess.run(["git", "add", "-f", ".env"], cwd=pdk_root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.email=test@test.com",
+                "-c",
+                "user.name=test",
+                "commit",
+                "-q",
+                "-m",
+                "add env file",
+            ],
+            cwd=pdk_root,
+            check=True,
+        )
+
+        assert main() == 1
+        captured = capsys.readouterr()
+        assert (
+            "deleted forbidden file .env "
+            "(committed secrets/env files must never be tracked)"
+        ) in captured.out
+        assert "deprecated template" not in captured.out
+
+    def test_no_forbidden_files_present_leaves_hook_unaffected(
+        self, pdk_root: Path
+    ) -> None:
+        """Hook passes on the FORBIDDEN_FILES check when no such file exists."""
+        from importlib.resources import files
+
+        from hooks._utils import apply_sync_markers
+        from hooks.check_template_drift import TEMPLATES
+
+        root = files("templates")
+        for rel in TEMPLATES:
+            local = pdk_root / rel
+            local.parent.mkdir(parents=True, exist_ok=True)
+            parts = rel.split("/")
+            src = root
+            for p in parts:
+                src = src.joinpath(p)
+            if src.is_file():
+                resolved = apply_sync_markers(
+                    src.read_text(encoding="utf-8"), keep="private"
+                )
+                local.write_text(resolved)
+
+        assert not (pdk_root / ".env").exists()
+        assert not (pdk_root / ".env.local").exists()
+        assert main() == 0
+
 
 class TestSyncMarkerStripping:
     def test_markers_stripped_from_enforced_content(self, pdk_root: Path) -> None:

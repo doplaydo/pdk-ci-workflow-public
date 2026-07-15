@@ -387,11 +387,16 @@ _MARKERS = {
 _MARKER_LINE_RE = re.compile(r"^\s*(?:#|<!--)\s*(SYNC-(?:PRIVATE|PUBLIC):[a-z]+)")
 
 _UNCOMMENT_RE = re.compile(r"^(\s*)#\s?(.*)$")
+_UNCOMMENT_HTML_RE = re.compile(r"^(\s*)<!--\s*(.*?)\s*-->$")
 
 
 def _uncomment(line: str) -> str:
     newline = "\n" if line.endswith("\n") else ""
     body = line[: len(line) - len(newline)] if newline else line
+    m = _UNCOMMENT_HTML_RE.match(body)
+    if m:
+        indent, rest = m.groups()
+        return f"{indent}{rest}{newline}"
     m = _UNCOMMENT_RE.match(body)
     if not m:
         return line

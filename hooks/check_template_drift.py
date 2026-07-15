@@ -10,6 +10,7 @@ Files to enforce are listed in TEMPLATES.
 from __future__ import annotations
 
 import difflib
+import subprocess
 import sys
 from importlib.resources import files
 from pathlib import Path
@@ -20,14 +21,12 @@ from hooks._utils import CheckResult, apply_sync_markers, is_self_repo
 # the same relative path under `templates/` in pdk-ci-workflow.
 TEMPLATES: list[str] = [
     ".github/dependabot.yml",
-    ".github/release-drafter.yml",
     ".github/workflows/claude-pr-review.yml",
     ".github/workflows/drc.yml",
     ".github/workflows/issue.yml",
     ".github/workflows/model_coverage.yml",
     ".github/workflows/model_regression.yml",
     ".github/workflows/pages.yml",
-    ".github/workflows/release-drafter.yml",
     ".github/workflows/test_code.yml",
     ".github/workflows/test_coverage.yml",
     ".github/workflows/update_badges.yml",
@@ -43,6 +42,19 @@ TEMPLATES: list[str] = [
 DEPRECATED_TEMPLATES: list[str] = [
     "build_cell.py",
     "sync_changelog.py",
+    ".github/release-drafter.yml",
+    ".github/workflows/release-drafter.yml",
+]
+
+# Files that must never be committed to a PDK repo (secrets, local env
+# overrides). If found *and tracked by git*, the hook force-deletes them.
+# Untracked/gitignored files with the same name on disk (e.g. a local .env
+# a developer legitimately keeps) are left alone -- this is a safety net
+# against committed secrets, not a substitute for a project's own
+# .gitignore, and must never delete a file that was never committed.
+FORBIDDEN_FILES: list[str] = [
+    ".env",
+    ".env.local",
 ]
 
 # Templates enforced only when a matching directory glob exists in the PDK repo.
@@ -113,6 +125,23 @@ def main() -> int:
         if local.exists():
             local.unlink()
             result.error(f"deleted deprecated template {rel} (now fetched by CI)")
+
+    for rel in FORBIDDEN_FILES:
+        local = Path(rel)
+        if not local.exists():
+            continue
+        tracked = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", rel],
+            capture_output=True,
+            text=True,
+        )
+        if tracked.returncode != 0:
+            continue  # exists on disk but never committed (e.g. gitignored local secret) -- leave it alone
+        local.unlink()
+        result.error(
+            f"deleted forbidden file {rel} "
+            "(committed secrets/env files must never be tracked)"
+        )
 
     return result.report()
 
