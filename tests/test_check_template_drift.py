@@ -115,6 +115,18 @@ class TestCheckTemplateDrift:
         # Second run: should pass (all match now)
         assert main() == 0
 
+    def test_deprecated_release_drafter_files_get_deleted(self, pdk_root: Path) -> None:
+        """release-drafter files, if still present locally, get force-deleted."""
+        stale_workflow = pdk_root / ".github" / "workflows" / "release-drafter.yml"
+        stale_config = pdk_root / ".github" / "release-drafter.yml"
+        stale_workflow.parent.mkdir(parents=True, exist_ok=True)
+        stale_workflow.write_text("# stale\n")
+        stale_config.write_text("# stale\n")
+
+        assert main() == 1
+        assert not stale_workflow.exists()
+        assert not stale_config.exists()
+
 
 class TestSyncMarkerStripping:
     def test_markers_stripped_from_enforced_content(self, pdk_root: Path) -> None:
