@@ -145,7 +145,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           tmp=$(mktemp -d)
-          cp badges/*.svg "$tmp/"
+          cp badges/coverage.svg badges/model_coverage.svg badges/cells.svg badges/issues.svg badges/prs.svg "$tmp/"
 
           # Clean untracked files so branch checkout succeeds
           git clean -fd

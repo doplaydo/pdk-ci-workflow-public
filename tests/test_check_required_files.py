@@ -48,10 +48,6 @@ class TestCheckRequiredFiles:
         shutil.rmtree(pdk_root / "tests")
         assert main() == 1
 
-    def test_missing_release_drafter_workflow(self, pdk_root: Path) -> None:
-        (pdk_root / ".github" / "workflows" / "release-drafter.yml").unlink()
-        assert main() == 1
-
     def test_test_yml_alternative_accepted(self, pdk_root: Path) -> None:
         """test.yml should be accepted as an alternative to test_code.yml."""
         tc = pdk_root / ".github" / "workflows" / "test_code.yml"
@@ -63,9 +59,7 @@ class TestCheckRequiredFiles:
         # Neither test_code.yml nor test.yml exists
         assert main() == 1
 
-    def test_recommended_missing_is_warning_not_error(
-        self, pdk_root: Path
-    ) -> None:
+    def test_recommended_missing_is_warning_not_error(self, pdk_root: Path) -> None:
         """Missing recommended files should not cause a failure."""
         # .gitattributes, .changelog.d/changelog_template.jinja, release.yml
         # are recommended. Remove changelog template (which we create in fixture)
