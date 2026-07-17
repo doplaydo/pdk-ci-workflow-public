@@ -91,7 +91,7 @@
   pass_filenames: false
   description: >
     Checks .github/workflows/ has test_code.yml with pre-commit and
-    test jobs. Recommends release.yml for published PDKs.
+    test jobs.
 
 - id: check-multi-band
   name: Validate multi-band PDK consistency
