@@ -51,9 +51,7 @@ class TestCheckMakefileTargets:
         )
         assert main() == 0
 
-    def test_recommended_targets_missing_only_warns(
-        self, pdk_root: Path
-    ) -> None:
+    def test_recommended_targets_missing_only_warns(self, pdk_root: Path) -> None:
         """Missing recommended targets should not fail the hook."""
         (pdk_root / "Makefile").write_text(
             textwrap.dedent("""\
@@ -116,10 +114,53 @@ class TestCheckMakefileTargets:
 
                 dev: install
                 \tgh api "repos/doplaydo/pdk-ci-workflow/contents/templates/.pre-commit-config.yaml?ref=main" --header "Accept: application/vnd.github.raw+json" > .pre-commit-config.yaml
+                \tuv run pre-commit clean
                 \tuv run pre-commit install
             """)
         )
         assert main() == 0
+
+    def test_dev_missing_precommit_clean_autofix_and_fails(
+        self, pdk_root: Path
+    ) -> None:
+        """dev target missing `pre-commit clean` gets it inserted before install, exits 1."""
+        makefile = pdk_root / "Makefile"
+        makefile.write_text(
+            textwrap.dedent("""\
+                install:
+                \tuv sync
+
+                test:
+                \tuv run pytest
+
+                dev: install
+                \tgh api "repos/doplaydo/pdk-ci-workflow/contents/templates/.pre-commit-config.yaml?ref=main" --header "Accept: application/vnd.github.raw+json" > .pre-commit-config.yaml
+                \tuv run pre-commit install
+            """)
+        )
+        assert main() == 1
+        rewritten = makefile.read_text()
+        dev_body = rewritten.split("dev:")[1]
+        assert "\tuv run pre-commit clean\n\tuv run pre-commit install" in dev_body
+
+    def test_dev_with_precommit_clean_passes(self, pdk_root: Path) -> None:
+        """dev target already running `pre-commit clean` before install passes without rewrite."""
+        makefile = pdk_root / "Makefile"
+        content = textwrap.dedent("""\
+            install:
+            \tuv sync
+
+            test:
+            \tuv run pytest
+
+            dev: install
+            \tgh api "repos/doplaydo/pdk-ci-workflow/contents/templates/.pre-commit-config.yaml?ref=main" --header "Accept: application/vnd.github.raw+json" > .pre-commit-config.yaml
+            \tuv run pre-commit clean
+            \tuv run pre-commit install
+        """)
+        makefile.write_text(content)
+        assert main() == 0
+        assert makefile.read_text() == content
 
     def test_dev_curl_already_public_passes(self, pdk_root: Path) -> None:
         """dev target already fetching the canonical public repo passes without rewrite."""

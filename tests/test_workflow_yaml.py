@@ -8,6 +8,7 @@ conventions, and — for templates — act as thin callers into the centralised
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -137,3 +138,67 @@ class TestTemplateWorkflowYaml:
                 )
 
 
+
+
+def test_badge_push_fetch_is_guarded_against_missing_remote_branch() -> None:
+    """The badge-push retry loop's ``git fetch origin badges`` must not
+    abort the whole step under GitHub Actions' default errexit shell when
+    the ``badges`` branch doesn't exist yet on the remote (first-ever run
+    for a repo) -- see #249.
+
+    ``git fetch origin badges`` exits 128 if the remote ref is missing.
+    Only ``2>/dev/null`` (stderr) was ever redirected -- the exit code was
+    not -- so under ``set -e`` the script aborted on that line before the
+    next line's ``git rev-parse --verify origin/badges`` fallback check
+    (which already correctly distinguishes "branch exists" from "branch
+    missing") ever ran. ``|| true`` on the fetch is the fix; the fallback
+    logic below it needs no change.
+    """
+    affected_files = (
+        WORKFLOWS_DIR / "drc.yml",
+        WORKFLOWS_DIR / "update_badges.yml",
+    )
+    for path in affected_files:
+        text = path.read_text()
+        assert "git fetch origin badges 2>/dev/null || true" in text, (
+            f"{path.name} is missing the `|| true` guard on "
+            "`git fetch origin badges` -- errexit will abort the badge-push "
+            "step on a repo's first-ever run, before the orphan-branch "
+            "fallback ever executes (see #249)"
+        )
+
+
+def test_badge_push_fetch_guard_survives_errexit(tmp_path: Path) -> None:
+    """Execute the actual guarded fetch line under GitHub Actions' default
+    errexit shell (`bash -eo pipefail`) against a scratch remote with no
+    `badges` ref, proving the fix survives real bash semantics -- not just
+    a substring match in the YAML text (see #249 review discussion)."""
+    remote = tmp_path / "remote.git"
+    work = tmp_path / "work"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    subprocess.run(["git", "clone", "-q", str(remote), str(work)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=work, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=work, check=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-q", "-m", "init"], cwd=work, check=True
+    )
+    subprocess.run(["git", "push", "-q", "origin", "HEAD:main"], cwd=work, check=True)
+
+    snippet = """
+git fetch origin badges 2>/dev/null || true
+echo "reached rev-parse check"
+if git rev-parse --verify origin/badges >/dev/null 2>&1; then
+  echo "branch exists"
+else
+  echo "branch missing -- would create orphan"
+fi
+"""
+    result = subprocess.run(
+        ["bash", "-eo", "pipefail", "-c", snippet],
+        cwd=work,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "reached rev-parse check" in result.stdout
+    assert "branch missing" in result.stdout

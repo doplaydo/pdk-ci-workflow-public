@@ -91,7 +91,7 @@ jobs:
           git checkout -f .
 
           for attempt in 1 2 3; do
-            git fetch origin badges 2>/dev/null
+            git fetch origin badges 2>/dev/null || true
             if git rev-parse --verify origin/badges >/dev/null 2>&1; then
               git checkout -f -B badges origin/badges
             else

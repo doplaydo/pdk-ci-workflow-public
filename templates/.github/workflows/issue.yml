@@ -21,3 +21,5 @@ on:
 jobs:
   label:
     uses: doplaydo/pdk-ci-workflow-public/.github/workflows/issue.yml@main
+    secrets:
+      PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}

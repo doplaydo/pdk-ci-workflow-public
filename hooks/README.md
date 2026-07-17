@@ -10,7 +10,7 @@ Each hook is a self-contained Python script that validates some aspect of a PDK 
 
 | Hook ID | Source | What it checks |
 |---------|--------|---------------|
-| `check-required-files` | `check_required_files.py` | README.md, CHANGELOG.md, LICENSE, Makefile, pyproject.toml, .gitignore, .pre-commit-config.yaml, tests/ directory, test workflow, release-drafter workflow |
+| `check-required-files` | `check_required_files.py` | README.md, CHANGELOG.md, LICENSE, Makefile, pyproject.toml, .gitignore, .pre-commit-config.yaml, tests/ directory, test workflow |
 | `check-pyproject-sections` | `check_pyproject_sections.py` | 11 sub-checks: build-system, project fields, optional deps (dev/docs), ruff config, ruff per-file-ignores, codespell, pytest, package-data, tbump, mypy, towncrier |
 | `check-package-init` | `check_package_init.py` | Top-level `__init__.py` defines `__version__` as string literal and `__all__` for public API |
 | `check-version-sync` | `check_version_sync.py` | Version consistency across pyproject.toml `[project].version`, `[tool.tbump.version].current`, `__init__.py __version__`, and README.md pip install line |
@@ -30,11 +30,12 @@ Each hook is a self-contained Python script that validates some aspect of a PDK 
 | Hook ID | Source | What it checks |
 |---------|--------|---------------|
 | `check-test-structure` | `check_test_structure.py` | `tests/` directory exists with test files, GDS reference directories, `difftest()` calls, and `data_regression` usage |
-<!-- | `check-makefile-targets` | `check_makefile_targets.py` | Required targets: install, test. Recommended: docs, build, test-force, update-pre, dev. Content checks: uv sync in install, pytest in test. Auto-fix: rewrites `dev` target's stale pre-commit-config fetch to `curl` against the public repo (exit 1; re-run exits 0) | -->
-| `check-workflows` | `check_workflows.py` | `.github/workflows/` has test_code.yml (or test.yml) with pre-commit job and test job; recommends release.yml |
+| `check-makefile-targets` | `check_makefile_targets.py` | Required targets: install, test. Recommended: docs, build, test-force, update-pre, dev. Content checks: uv sync in install, pytest in test. Auto-fix: rewrites `dev` target's stale pre-commit-config fetch to `curl` against the public repo (exit 1; re-run exits 0) |
+| `check-workflows` | `check_workflows.py` | `.github/workflows/` has test_code.yml (or test.yml) with pre-commit job and test job |
 | `check-precommit-config` | `check_precommit_config.py` | `.pre-commit-config.yaml` includes required hooks (end-of-file-fixer, trailing-whitespace, ruff or ruff-lint, ruff-format) and recommended hooks (nbstripout, codespell) |
-| `check-template-drift` | `check_template_drift.py` | Enforces `.github/dependabot.yml`, `.github/release-drafter.yml`, and `.github/workflows/*.yml` thin callers match upstream `templates/`. Ruff-style auto-fix: missing or drifted files are rewritten from the canonical template, exit 1; re-run exits 0. Conditionally enforces `sample-projects.yml` only in repos containing a `*--sample-projects/` directory. No-ops inside pdk-ci-workflow itself. |
+| `check-template-drift` | `check_template_drift.py` | Enforces `.github/dependabot.yml` and `.github/workflows/*.yml` thin callers match upstream `templates/`. Ruff-style auto-fix: missing or drifted files are rewritten from the canonical template, exit 1; re-run exits 0. Conditionally enforces `sample-projects.yml` only in repos containing a `*--sample-projects/` directory. Deletes stale `release-drafter.yml` files if still present. No-ops inside pdk-ci-workflow itself. |
 | `check-hook-freshness` | `check_hook_freshness.py` | Detects a stale local pre-commit cache: compares the commit the installed hook checkout was cloned from (via the `.git` directory pre-commit leaves alongside the installed venv) against the current tip of this hook repo's `main`, and fails with instructions to run `pre-commit clean` if they differ. Warns instead of failing when offline or the check can't be determined. No-ops inside pdk-ci-workflow itself. |
+| `check-uv-lock-tracked` | `check_uv_lock_tracked.py` | For repos that use uv (Makefile `install` target invokes `uv`, `[tool.uv]` in pyproject.toml, or `uv.lock` already present), `uv.lock` exists and is tracked by git (not gitignored, not simply un-added). Fails if missing, or present but untracked. No-ops for non-uv repos and inside pdk-ci-workflow itself. |
 
 ### Multi-band
 
