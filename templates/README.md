@@ -7,13 +7,13 @@ Copy these files into your PDK repo as-is. No modification needed.
 Minimal wrappers — each calls the upstream reusable workflow and forwards secrets explicitly.
 
 
+
 | File | Purpose |
 |------|---------|
 | `.github/workflows/test_code.yml` | Pre-commit, pytest, GFP validation |
 | `.github/workflows/sample-projects.yml` | Unit tests, notebooks, and DRC for `*--sample-projects/` directories — deployed automatically by `check-template-drift` |
 | `.github/workflows/pages.yml` | Sphinx docs build + GitHub Pages |
 | `.github/workflows/claude-pr-review.yml` | AI code review via Claude — runs once on PR open/reopen; re-run on demand with `/claude-api review` comment |
-| `.github/workflows/release-drafter.yml` | Semantic versioning + Claude-curated release notes |
 | `.github/workflows/drc.yml` | Design Rule Check via GFP |
 | `.github/workflows/issue.yml` | Auto-label PDK issues |
 | `.github/workflows/test_coverage.yml` | Pytest with line coverage reporting |
@@ -21,6 +21,12 @@ Minimal wrappers — each calls the upstream reusable workflow and forwards secr
 | `.github/workflows/model_regression.yml` | Model-specific regression tests |
 | `.github/workflows/update_badges.yml` | Generate coverage, model, issue, and PR badges |
 | `.github/workflows/code-security.yml` | SAST (Semgrep) and SCA (Trivy) security scans |
+
+
+
+
+
+
 
 ## Pre-commit Config
 
@@ -33,12 +39,14 @@ Minimal wrappers — each calls the upstream reusable workflow and forwards secr
 ```makefile
 dev: install
 	curl -sf https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/templates/.pre-commit-config.yaml -o .pre-commit-config.yaml
+	uv run pre-commit clean
 	uv run pre-commit install
 ```
+
+- **If `git commit` fails with `` `<hook-id>` is not present in repository https://github.com/doplaydo/pdk-ci-workflow-public ``:** your local pre-commit cache predates a hook that was added upstream. Run `pre-commit clean && make dev` — do **not** run `pre-commit autoupdate`, it does not work for the mutable `rev: main` pin and will not fix this.
 
 ## Other Config
 
 | File | Purpose |
 |------|---------|
 | `.github/dependabot.yml` | Monthly pip + github-actions updates |
-| `.github/release-drafter.yml` | Release note categories + auto-labeler |

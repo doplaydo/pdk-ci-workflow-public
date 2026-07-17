@@ -86,10 +86,6 @@ def main() -> int:
                 if not has_test_job:
                     result.warn(f"{test_wf_path}: no test_code job found")
 
-    # 9c. release.yml should exist
-    release_path = wf_dir / "release.yml"
-    if not release_path.exists():
-        result.warn("Recommended workflow missing: .github/workflows/release.yml")
 
     return result.report()
 
