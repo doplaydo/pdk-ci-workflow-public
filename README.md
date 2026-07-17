@@ -84,6 +84,7 @@ Add to your `Makefile`:
 ```makefile
 dev: install
 	curl -sf https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/templates/.pre-commit-config.yaml -o .pre-commit-config.yaml
+	uv run pre-commit clean
 	uv run pre-commit install
 ```
 
@@ -101,6 +102,7 @@ Then run `make dev`.
 - **Locally:** `make dev` downloads the config and installs the git hooks. Pre-commit then runs automatically on every `git commit`.
 - **Versions of all tools** (ruff, codespell, nbstripout, pretty-format-toml, etc.) are controlled centrally in this repo via `additional_dependencies`. Bumping a version here propagates to all PDK repos — no downstream PRs needed.
 - **PDK-specific overrides** (e.g. custom `check-yaml` excludes): keep a committed `.pre-commit-config.yaml` instead, still referencing pdk-ci-workflow as the only repo.
+- **If `git commit` fails with `` `<hook-id>` is not present in repository https://github.com/doplaydo/pdk-ci-workflow-public ``:** your local pre-commit cache predates a hook that was added upstream. Run `pre-commit clean && make dev` — do **not** run `pre-commit autoupdate`, it does not work for the mutable `rev: main` pin and will not fix this.
 
 ## Reusable Workflows
 
@@ -114,7 +116,6 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 | `test-sample-projects.yml` | discover, test, notebooks, drc | Unit tests, notebook execution, and DRC for all `*--sample-projects/` directories |
 | `pages.yml` | build-docs, deploy-docs | Sphinx docs build and GitHub Pages deployment |
 | `claude-pr-review.yml` | review | AI code review via Claude Sonnet 4. Runs once on PR open/reopen; re-run on demand by commenting `/claude-api review` |
-| `release-drafter.yml` | update_release_draft | Auto-drafted release notes with Claude-curated changelog |
 | `drc.yml` | drc | Design Rule Check with GFP and badge generation |
 | `issue.yml` | add-label | Auto-labels issues with "pdk" tag |
 | `test_coverage.yml` | coverage | Pytest with line coverage reporting |
@@ -131,9 +132,9 @@ PDK repos must have these secrets configured and forwarded explicitly in their w
 | Secret | Used by |
 |--------|---------|
 | `GFP_API_KEY` | test_code, test-sample-projects, pages, drc, test_coverage, model_coverage, model_regression, update_badges |
-| `ANTHROPIC_API_KEY` | claude-pr-review, release-drafter (changelog curation) |
+| `ANTHROPIC_API_KEY` | claude-pr-review |
 | `SIMCLOUD_APIKEY` | pages |
-| `GITHUB_TOKEN` | release-drafter, issue, update_badges (automatic) |
+| `GITHUB_TOKEN` | issue, update_badges (automatic) |
 
 ## Pre-commit Hooks
 
@@ -152,7 +153,7 @@ See [`hooks/README.md`](hooks/README.md) for detailed documentation.
 
 | Hook ID | What it checks |
 |---------|---------------|
-| `check-required-files` | README.md, CHANGELOG.md, LICENSE, Makefile, pyproject.toml, .gitignore, .pre-commit-config.yaml, tests/, test workflow, release-drafter workflow |
+| `check-required-files` | README.md, CHANGELOG.md, LICENSE, Makefile, pyproject.toml, .gitignore, .pre-commit-config.yaml, tests/, test workflow |
 | `check-pyproject-sections` | Deep validation of pyproject.toml: build-system, project fields, ruff, codespell, pytest, tbump, mypy, towncrier, package-data (11 sub-checks) |
 | `check-package-init` | `__version__` defined as string literal, `__all__` defined in package `__init__.py` |
 | `check-version-sync` | Version consistency across pyproject.toml, tbump config, `__init__.py`, and README.md |
@@ -172,10 +173,10 @@ See [`hooks/README.md`](hooks/README.md) for detailed documentation.
 | Hook ID | What it checks |
 |---------|---------------|
 | `check-test-structure` | `tests/` directory with test files, GDS reference dirs, `difftest()` calls, `data_regression` usage |
-<!-- | `check-makefile-targets` | Required targets (install, test) and recommended targets (docs, build, test-force, update-pre, dev). Auto-fix: rewrites `dev` target's stale pre-commit-config fetch to `curl` against the public repo (exit 1; re-run exits 0) | -->
+| `check-makefile-targets` | Required targets (install, test) and recommended targets (docs, build, test-force, update-pre, dev). Auto-fix: rewrites `dev` target's stale pre-commit-config fetch to `curl` against the public repo (exit 1; re-run exits 0) |
 | `check-workflows` | `.github/workflows/` has test_code.yml with pre-commit and test jobs |
 | `check-precommit-config` | `.pre-commit-config.yaml` includes required hooks (trailing-whitespace, end-of-file-fixer, ruff or ruff-lint, ruff-format) |
-| `check-template-drift` | `.github/dependabot.yml`, `.github/release-drafter.yml`, and `.github/workflows/*.yml` thin callers match upstream templates. Auto-fixes by rewriting or creating files. Conditionally deploys `sample-projects.yml` in repos containing `*--sample-projects/` directories. |
+| `check-template-drift` | `.github/dependabot.yml` and `.github/workflows/*.yml` thin callers match upstream templates. Auto-fixes by rewriting or creating files. Conditionally deploys `sample-projects.yml` in repos containing `*--sample-projects/` directories. Deletes stale `release-drafter.yml` files if still present. |
 
 #### Multi-band
 
@@ -196,7 +197,6 @@ Reference configuration files are provided in `templates/` for onboarding new PD
 | `.github/workflows/sample-projects.yml` | Unit tests, notebooks, and DRC for `*--sample-projects/` directories (auto-deployed by `check-template-drift` when sample dirs are present) |
 | `.github/workflows/pages.yml` | Sphinx docs build and GitHub Pages deployment |
 | `.github/workflows/claude-pr-review.yml` | AI code review via Claude — runs once on PR open/reopen; re-run on demand with `/claude-api review` comment |
-| `.github/workflows/release-drafter.yml` | Semantic versioning and Claude-curated release notes |
 | `.github/workflows/drc.yml` | Design Rule Check via GFP |
 | `.github/workflows/issue.yml` | Auto-label PDK issues |
 | `.github/workflows/test_coverage.yml` | Pytest with line coverage reporting |
@@ -205,7 +205,6 @@ Reference configuration files are provided in `templates/` for onboarding new PD
 | `.github/workflows/update_badges.yml` | Generate coverage, model, issue, and PR badges |
 | `.github/workflows/code-security.yml` | SAST (Semgrep) and SCA (Trivy) security scans |
 | `.github/dependabot.yml` | Monthly pip and github-actions dependency updates |
-| `.github/release-drafter.yml` | Release note template with semantic versioning categories |
 
 ## Composite Actions
 
@@ -225,7 +224,6 @@ Check back for updates as composite actions are added to this repository.
 Some configuration files **cannot** be referenced remotely and must live directly in each PDK repository:
 
 - `.github/dependabot.yml` - Dependency update configuration (template provided)
-- `.github/release-drafter.yml` - Release note templates (template provided)
 - `.github/CODEOWNERS` - Code ownership rules (no template — repo-specific)
 - `Makefile` - Build targets: `install`, `test`, `docs`, `dev` (no template — repo-specific)
 
@@ -242,7 +240,7 @@ PDK repositories consuming these workflows need:
 
 For PDK repositories (passed explicitly in each wrapper workflow):
 - `GFP_API_KEY` - GDSFactory Platform validation (test_code, pages, drc, test_coverage, model_coverage, model_regression, update_badges)
-- `ANTHROPIC_API_KEY` - Claude code reviews and release note curation (claude-pr-review, release-drafter)
+- `ANTHROPIC_API_KEY` - Claude code reviews (claude-pr-review)
 - `SIMCLOUD_APIKEY` - Simulation cloud access (pages)
 
 ### GitHub Pages (for documentation)
@@ -289,7 +287,6 @@ PDK repositories currently reference `@main` for all workflows and pre-commit ho
 pdk-ci-workflow/
 ├── .github/
 │   ├── workflows/          # Reusable workflows
-│   ├── release-drafter.yml # Release note template config
 │   └── README.md
 ├── hooks/                  # Pre-commit hook implementations
 │   ├── _utils.py           # Shared utilities (TOML/YAML, AST, CheckResult)

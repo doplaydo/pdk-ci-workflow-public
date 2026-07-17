@@ -43,6 +43,7 @@ _PDK_HOOK_IDS = {
     "check-precommit-config",
     "check-version-sync",
     "check-template-drift",
+    "check-uv-lock-tracked",
 }
 
 

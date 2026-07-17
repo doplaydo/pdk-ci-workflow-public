@@ -1,6 +1,9 @@
 name: Auto-label PDK issues
 on:
   workflow_call:
+    secrets:
+      PROJECT_TOKEN:
+        required: false
   issues:
     types:
       - opened
