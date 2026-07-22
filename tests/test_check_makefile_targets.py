@@ -174,7 +174,31 @@ class TestCheckMakefileTargets:
     
                 dev: install
                 \tcurl -sf https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/templates/.pre-commit-config.yaml -o .pre-commit-config.yaml
+                \tuv run pre-commit clean
                 \tuv run pre-commit install
             """)
         )
         assert main() == 0
+    
+    def test_dev_curl_public_missing_precommit_clean_autofix_and_fails(
+        self, pdk_root: Path
+    ) -> None:
+        """Public curl + pre-commit install but no clean → auto-fix inserts clean, exits 1."""
+        makefile = pdk_root / "Makefile"
+        makefile.write_text(
+            textwrap.dedent("""\
+                install:
+                \tuv sync
+    
+                test:
+                \tuv run pytest
+    
+                dev: install
+                \tcurl -sf https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/templates/.pre-commit-config.yaml -o .pre-commit-config.yaml
+                \tuv run pre-commit install
+            """)
+        )
+        assert main() == 1
+        rewritten = makefile.read_text()
+        dev_body = rewritten.split("dev:")[1]
+        assert "\tuv run pre-commit clean\n\tuv run pre-commit install" in dev_body

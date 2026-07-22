@@ -7,10 +7,13 @@ under a ``samples/`` directory (demo/tapeout cells that reuse BB cells
 and would cause cellname collisions), cells whose names start with "_",
 and cells that require positional arguments are skipped automatically.
 
-Use ``--skip cell1 cell2 ...`` to skip additional cells by name.
+Use ``--skip cell1 cell2 ...`` to skip additional cells by name or
+glob pattern (e.g. ``--skip "TEMPLATE_*"`` skips all cells starting
+with ``TEMPLATE_``).
 """
 
 import argparse
+import fnmatch
 import importlib.util
 import inspect
 import sys
@@ -34,8 +37,8 @@ if cell_name == "all_cells":
 
     components = []
     for name, func in sorted(pdk.cells.items()):
-        if name in skip_cells:
-            print(f"Skipping {name}: in --skip list")
+        if any(fnmatch.fnmatchcase(name, pat) for pat in skip_cells):
+            print(f"Skipping {name}: matches --skip pattern")
             continue
 
         if name.startswith("_"):
