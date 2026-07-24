@@ -44,6 +44,7 @@ DEPRECATED_TEMPLATES: list[str] = [
     "sync_changelog.py",
     ".github/release-drafter.yml",
     ".github/workflows/release-drafter.yml",
+    ".github/workflows/auto-label-pdk.yml",
 ]
 
 # Files that must never be committed to a PDK repo (secrets, local env
