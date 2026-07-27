@@ -114,6 +114,8 @@ jobs:
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install dependencies (no dev)
         run: uv sync --no-dev
+      - name: Install gdsfactoryplus
+        run: uv export --frozen --no-hashes | grep '^gdsfactoryplus' | xargs uv pip install
       - name: Test with gfp test (no dev deps)
         run: uv run --no-sync gfp test
       - name: Upload difftest artifacts
