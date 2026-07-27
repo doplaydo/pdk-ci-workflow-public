@@ -19,6 +19,7 @@ PDK repos create thin wrapper workflows that call these and forward secrets expl
 | `model_coverage.yml` | model-coverage | `GFP_API_KEY` | PDK model-to-cell coverage check |
 | `model_regression.yml` | model-regression | `GFP_API_KEY` | Model-specific regression tests |
 | `update_badges.yml` | badges | `GFP_API_KEY`, `GITHUB_TOKEN` | Generate coverage, model, issue, and PR badges |
+| `build-pdf.yml` | build-pdf | `GFP_API_KEY`, `SIMCLOUD_APIKEY`, `PDK_CI_WORKFLOW_TOKEN` | Build PDF docs on demand; uploads artifact and optionally attaches to a release |
 
 ## Example Usage
 

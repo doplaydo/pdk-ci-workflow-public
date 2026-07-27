@@ -27,6 +27,7 @@ TEMPLATES: list[str] = [
     ".github/workflows/model_coverage.yml",
     ".github/workflows/model_regression.yml",
     ".github/workflows/pages.yml",
+    ".github/workflows/build-pdf.yml",
     ".github/workflows/test_code.yml",
     ".github/workflows/test_coverage.yml",
     ".github/workflows/update_badges.yml",

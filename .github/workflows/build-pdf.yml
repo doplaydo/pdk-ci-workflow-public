@@ -1,0 +1,198 @@
+name: Build PDF
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ''
+        description: 'Git ref to build from (defaults to the triggering ref)'
+      release_tag:
+        type: string
+        required: false
+        default: ''
+        description: 'If set, upload the PDF to this existing GitHub release (--clobber)'
+    secrets:
+      GFP_API_KEY:
+        required: false
+      SIMCLOUD_APIKEY:
+        required: false
+      PDK_CI_WORKFLOW_TOKEN:
+        required: false
+
+env:
+  GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
+  SIMCLOUD_APIKEY: ${{ secrets.SIMCLOUD_APIKEY }}
+
+jobs:
+  build-pdf:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Load config from pyproject.toml
+        id: config
+        run: |
+          json=$(python3 <<'PYEOF'
+          import json
+          import tomllib
+
+          with open("pyproject.toml", "rb") as f:
+              data = tomllib.load(f)
+
+          cfg = data.get("tool", {}).get("pdk-ci-workflow", {}).get("release", {})
+          defaults = {
+              "pdf_filename_prefix": "docs",
+              "pre_build_command": "make rm-samples",
+              "use_just": False,
+              "checkout_submodules": "false",
+              "pdf_install_command": "make dev",
+              "pdf_build_command": "make docs-pdf",
+              "pdf_apt_packages": [
+                  "texlive-latex-extra",
+                  "texlive-fonts-extra",
+                  "texlive-xetex",
+                  "latexmk",
+                  "xindy",
+              ],
+          }
+          merged = {**defaults, **cfg}
+          version = data.get("project", {}).get("version", "dev")
+          merged["version"] = version
+          print(json.dumps(merged))
+          PYEOF
+          )
+          echo "json=$json" >> "$GITHUB_OUTPUT"
+
+      - name: Init submodules
+        if: fromJSON(steps.config.outputs.json).checkout_submodules != 'false'
+        run: git submodule update --init --recursive
+
+      - if: fromJSON(steps.config.outputs.json).use_just
+        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+
+      - name: Pre-build
+        if: fromJSON(steps.config.outputs.json).pre_build_command != ''
+        run: ${{ fromJSON(steps.config.outputs.json).pre_build_command }}
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+
+      - name: Install dependencies
+        env:
+          GH_TOKEN: ${{ secrets.PDK_CI_WORKFLOW_TOKEN || github.token }}
+        run: |
+          sudo apt-get update
+          ${{ fromJSON(steps.config.outputs.json).pdf_install_command }}
+          echo '${{ steps.config.outputs.json }}' | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin)['pdf_apt_packages']))" | xargs sudo apt-get install -y
+
+      - name: Auto-generate PDF build files
+        run: |
+          sudo apt-get install -y libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 2>/dev/null || true
+
+          if [ ! -f mkdocs-pdf.yml ]; then
+            echo "No mkdocs-pdf.yml found — generating from zensical.toml"
+            uv run python3 <<'PYEOF'
+          import tomllib, yaml
+          from pathlib import Path
+
+          zensical = Path("zensical.toml")
+          if not zensical.exists():
+              print("::warning::No mkdocs-pdf.yml and no zensical.toml — relying on pdf_build_command as-is")
+              raise SystemExit(0)
+
+          with open(zensical, "rb") as f:
+              cfg = tomllib.load(f)
+
+          p = cfg.get("project", {})
+          site_name = p.get("site_name", "PDK Documentation")
+          theme_cfg = p.get("theme", {})
+
+          config = {
+              "site_name": site_name,
+              "docs_dir": "docs",
+              "site_dir": "build/pdf",
+              "plugins": [
+                  "search",
+                  "autorefs",
+                  {"mkdocstrings": {"handlers": {"python": {"options": {
+                      "docstring_style": "google",
+                      "show_root_toc_entry": False,
+                      "show_source": False,
+                  }}}}},
+                  {"with-pdf": {
+                      "author": "GDSFactory",
+                      "cover_subtitle": "Photonics Process Design Kit",
+                      "output_path": "../../docs.pdf",
+                  }},
+              ],
+              "markdown_extensions": [
+                  {"pymdownx.tabbed": {"alternate_style": True}},
+                  "pymdownx.superfences",
+              ],
+              "theme": {
+                  "name": theme_cfg.get("name", "material"),
+                  "logo": theme_cfg.get("logo", "logo.png"),
+              },
+          }
+
+          with open("mkdocs-pdf.yml", "w") as f:
+              yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
+
+          print("Generated mkdocs-pdf.yml from zensical.toml")
+          PYEOF
+          else
+            echo "mkdocs-pdf.yml already exists — using as-is"
+          fi
+
+          if [ -f Makefile ] && ! grep -q '^docs-pdf:' Makefile; then
+            echo "Adding docs-pdf target to Makefile"
+            if grep -q '^rst:' Makefile; then
+              printf '\ndocs-pdf: rst\n\tuv run --with mkdocs-with-pdf --with "mkdocstrings[python]" --with mkdocs-material --with mkdocs-autorefs mkdocs build -f mkdocs-pdf.yml\n' >> Makefile
+            else
+              printf '\ndocs-pdf:\n\tuv run --with mkdocs-with-pdf --with "mkdocstrings[python]" --with mkdocs-material --with mkdocs-autorefs mkdocs build -f mkdocs-pdf.yml\n' >> Makefile
+            fi
+          fi
+
+      - name: Strip links and mentions from changelog for PDF build
+        run: |
+          python3 <<'PYEOF'
+          import re
+          from pathlib import Path
+
+          p = Path("docs/changelog.md")
+          if p.exists():
+              text = p.read_text(encoding="utf-8")
+              text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+              text = re.sub(r"https?://\S+", "", text)
+              text = re.sub(r"@[A-Za-z0-9_-]+", "", text)
+              p.write_text(text, encoding="utf-8")
+          PYEOF
+
+      - name: Build PDF
+        run: |
+          ${{ fromJSON(steps.config.outputs.json).pdf_build_command }}
+          version="${{ fromJSON(steps.config.outputs.json).version }}"
+          prefix="${{ fromJSON(steps.config.outputs.json).pdf_filename_prefix }}"
+          mv docs.pdf "${prefix}-${version}.pdf"
+          echo "pdf_file=${prefix}-${version}.pdf" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docs-pdf
+          path: ./${{ env.pdf_file }}
+
+      - name: Upload to release
+        if: inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.release_tag }}" "${{ env.pdf_file }}" --clobber
