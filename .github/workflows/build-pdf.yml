@@ -8,6 +8,11 @@ on:
         required: false
         default: ''
         description: 'Git ref to build from (defaults to the triggering ref)'
+      version:
+        type: string
+        required: false
+        default: ''
+        description: 'Version string for the PDF filename (e.g. 1.2.3). If empty, read from pyproject.toml [project].version.'
       release_tag:
         type: string
         required: false
@@ -62,7 +67,7 @@ jobs:
               ],
           }
           merged = {**defaults, **cfg}
-          version = data.get("project", {}).get("version", "dev")
+          version = "${{ inputs.version }}" or data.get("project", {}).get("version", "dev")
           merged["version"] = version
           print(json.dumps(merged))
           PYEOF
