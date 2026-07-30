@@ -80,7 +80,7 @@ class TestCheckHookFreshness:
         content += (
             "- hooks:\n"
             "  - id: check-hook-freshness\n"
-            "  repo: https://github.com/doplaydo/pdk-ci-workflow\n"
+            "  repo: https://github.com/doplaydo/pdk-ci-workflow-public\n"
             "  rev: v1.2.3\n"
         )
         config.write_text(content)
@@ -100,7 +100,7 @@ class TestCheckHookFreshness:
         content += (
             "- hooks:\n"
             "  - id: check-hook-freshness\n"
-            "  repo: https://github.com/doplaydo/pdk-ci-workflow\n"
+            "  repo: https://github.com/doplaydo/pdk-ci-workflow-public\n"
             "  rev: main\n"
         )
         config.write_text(content)

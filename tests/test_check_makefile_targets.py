@@ -82,7 +82,7 @@ class TestCheckMakefileTargets:
 
     def test_dev_curl_autofix_rewrites_and_fails(self, pdk_root: Path) -> None:
         """dev target fetching the canonical config gets normalized and exits 1."""
-        stale_curl = "curl -sf https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow/main/templates/.pre-commit-config.yaml -o .pre-commit-config.yaml"
+        stale_curl = "curl -sf https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/templates/.pre-commit-config.yaml -o .pre-commit-config.yaml"
         makefile = pdk_root / "Makefile"
         makefile.write_text(
             textwrap.dedent(f"""\
@@ -113,7 +113,7 @@ class TestCheckMakefileTargets:
                 \tuv run pytest
 
                 dev: install
-                \tgh api "repos/doplaydo/pdk-ci-workflow/contents/templates/.pre-commit-config.yaml?ref=main" --header "Accept: application/vnd.github.raw+json" > .pre-commit-config.yaml
+                \tgh api "repos/doplaydo/pdk-ci-workflow-public/contents/templates/.pre-commit-config.yaml?ref=main" --header "Accept: application/vnd.github.raw+json" > .pre-commit-config.yaml
                 \tuv run pre-commit clean
                 \tuv run pre-commit install
             """)
@@ -134,7 +134,7 @@ class TestCheckMakefileTargets:
                 \tuv run pytest
 
                 dev: install
-                \tgh api "repos/doplaydo/pdk-ci-workflow/contents/templates/.pre-commit-config.yaml?ref=main" --header "Accept: application/vnd.github.raw+json" > .pre-commit-config.yaml
+                \tgh api "repos/doplaydo/pdk-ci-workflow-public/contents/templates/.pre-commit-config.yaml?ref=main" --header "Accept: application/vnd.github.raw+json" > .pre-commit-config.yaml
                 \tuv run pre-commit install
             """)
         )
@@ -154,7 +154,7 @@ class TestCheckMakefileTargets:
             \tuv run pytest
 
             dev: install
-            \tgh api "repos/doplaydo/pdk-ci-workflow/contents/templates/.pre-commit-config.yaml?ref=main" --header "Accept: application/vnd.github.raw+json" > .pre-commit-config.yaml
+            \tgh api "repos/doplaydo/pdk-ci-workflow-public/contents/templates/.pre-commit-config.yaml?ref=main" --header "Accept: application/vnd.github.raw+json" > .pre-commit-config.yaml
             \tuv run pre-commit clean
             \tuv run pre-commit install
         """)
