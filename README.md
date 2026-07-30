@@ -116,6 +116,12 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 | `test-sample-projects.yml` | discover, test, notebooks, drc | Unit tests, notebook execution, and DRC for all `*--sample-projects/` directories |
 | `pages.yml` | build-docs, deploy-docs | Sphinx docs build and GitHub Pages deployment |
 | `claude-pr-review.yml` | review | AI code review via Claude Sonnet 4. Runs once on PR open/reopen; re-run on demand by commenting `/claude-api review` |
+| `drc.yml` | drc | Design Rule Check with GFP and badge generation |
+| `issue.yml` | add-label | Auto-labels issues with "pdk" tag |
+| `test_coverage.yml` | coverage | Pytest with line coverage reporting |
+| `model_coverage.yml` | model-coverage | PDK model-to-cell coverage check |
+| `model_regression.yml` | model-regression | Model-specific regression tests |
+| `update_badges.yml` | badges | Generate coverage, model, issue, and PR badges |
 
 ### Release CI Health Gate
 
@@ -134,12 +140,6 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 - `drc` — DRC check jobs
 
 To add or remove a required check, edit the `REQUIRED_EXACT` array or `REQUIRED_PATTERNS` string in the `Check main branch CI health` step in `cut-release.yml`.
-| `drc.yml` | drc | Design Rule Check with GFP and badge generation |
-| `issue.yml` | add-label | Auto-labels issues with "pdk" tag |
-| `test_coverage.yml` | coverage | Pytest with line coverage reporting |
-| `model_coverage.yml` | model-coverage | PDK model-to-cell coverage check |
-| `model_regression.yml` | model-regression | Model-specific regression tests |
-| `update_badges.yml` | badges | Generate coverage, model, issue, and PR badges |
 
 PDK repos call these workflows from thin wrapper files in `.github/workflows/`, passing secrets explicitly. See `templates/.github/workflows/` for ready-to-copy wrappers.
 
