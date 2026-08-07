@@ -116,24 +116,6 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 | `test-sample-projects.yml` | discover, test, notebooks, drc | Unit tests, notebook execution, and DRC for all `*--sample-projects/` directories |
 | `pages.yml` | build-docs, deploy-docs | Sphinx docs build and GitHub Pages deployment |
 | `claude-pr-review.yml` | review | AI code review via Claude Sonnet 4. Runs once on PR open/reopen; re-run on demand by commenting `/claude-api review` |
-
-### Release CI Health Gate
-
-`cut-release.yml` verifies that main is healthy before proceeding. The check only runs once here — `release.yml` always follows a successful `cut-release` and doesn't repeat it. Rather than blocking on any failure (which is fragile — failed release runs leave their own check runs on HEAD), the gate uses an **allowlist**: it requires a specific set of checks to be present and passing.
-
-**Exact-match required checks** (must exist with `conclusion == success`):
-
-- `test / pre-commit`
-- `test / test_code`
-- `test / test_gfp`
-- `test / test_gfp_no_dev`
-
-**Pattern-matched required checks** (all runs whose name contains the pattern must be `success`):
-
-- `test-sample-projects` — per-project sample-project test jobs
-- `drc` — DRC check jobs
-
-To add or remove a required check, edit the `REQUIRED_EXACT` array or `REQUIRED_PATTERNS` string in the `Check main branch CI health` step in `cut-release.yml`.
 | `drc.yml` | drc | Design Rule Check with GFP and badge generation |
 | `issue.yml` | add-label | Auto-labels issues with "pdk" tag |
 | `test_coverage.yml` | coverage | Pytest with line coverage reporting |
@@ -142,6 +124,7 @@ To add or remove a required check, edit the `REQUIRED_EXACT` array or `REQUIRED_
 | `update_badges.yml` | badges | Generate coverage, model, issue, and PR badges |
 
 PDK repos call these workflows from thin wrapper files in `.github/workflows/`, passing secrets explicitly. See `templates/.github/workflows/` for ready-to-copy wrappers.
+
 
 ### Required Secrets
 
