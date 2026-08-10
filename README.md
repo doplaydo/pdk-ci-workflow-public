@@ -114,7 +114,7 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 |----------|------|-------------|
 | `test_code.yml` | pre-commit, test_code, test_gfp | Pre-commit (canonical config), pytest, GFP validation |
 | `test-sample-projects.yml` | discover, test, notebooks, drc | Unit tests, notebook execution, and DRC for all `*--sample-projects/` directories |
-| `pages.yml` | build-docs, deploy-docs | Sphinx docs build and GitHub Pages deployment |
+| `pages.yml` | build-docs | Sphinx docs build and Pages artifact upload. The caller's wrapper supplies the `deploy-docs` job that publishes to GitHub Pages |
 | `claude-pr-review.yml` | review | AI code review via Claude Sonnet 4. Runs once on PR open/reopen; re-run on demand by commenting `/claude-api review` |
 | `drc.yml` | drc | Design Rule Check with GFP and badge generation |
 | `issue.yml` | add-label | Auto-labels issues with "pdk" tag |
@@ -136,6 +136,7 @@ PDK repos must have these secrets configured and forwarded explicitly in their w
 | `ANTHROPIC_API_KEY` | claude-pr-review |
 | `SIMCLOUD_APIKEY` | pages |
 | `GITHUB_TOKEN` | issue, update_badges (automatic) |
+
 
 ## Pre-commit Hooks
 
@@ -248,6 +249,7 @@ For PDK repositories (passed explicitly in each wrapper workflow):
 Enable GitHub Pages in your repository settings:
 - Source: GitHub Actions
 - Branch: Leave as default (workflow controls deployment)
+
 
 ## Contributing
 
