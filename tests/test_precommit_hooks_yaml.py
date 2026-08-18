@@ -44,6 +44,7 @@ _PDK_HOOK_IDS = {
     "check-version-sync",
     "check-template-drift",
     "check-uv-lock-tracked",
+    "check-uv-lock-sync",
 }
 
 

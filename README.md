@@ -21,7 +21,7 @@ This repository provides reusable automation tooling for Process Design Kit (PDK
 This repository provides four complementary automation patterns:
 
 - **Reusable GitHub Actions Workflows** - Complete CI/CD jobs for testing, docs, releases, and code review
-- **Pre-commit Hooks** - 15 PDK compliance checks plus 10 third-party tool wrappers (ruff, codespell, etc.) with centrally controlled versions
+- **Pre-commit Hooks** - 16 PDK compliance checks plus 10 third-party tool wrappers (ruff, codespell, etc.) with centrally controlled versions
 - **Templates** - Reference configuration files for onboarding new PDK repos
 - **Composite Actions** - Shared step sequences for flexible workflow composition (in development)
 
@@ -142,7 +142,7 @@ PDK repos must have these secrets configured and forwarded explicitly in their w
 
 Two types of hooks are defined in `.pre-commit-hooks.yaml`:
 
-- **15 PDK compliance hooks** (`hooks/*.py`) — validate repo structure, cells, tech, tests, etc.
+- **16 PDK compliance hooks** (`hooks/*.py`) — validate repo structure, cells, tech, tests, etc.
 - **10 third-party wrapper hooks** — ruff, codespell, nbstripout, trailing-whitespace, etc. with versions pinned via `additional_dependencies` so they're controlled centrally
 
 All hooks use `always_run: true` and `pass_filenames: false` (repo-level checks). Errors = failure, warnings = pass but alert.
