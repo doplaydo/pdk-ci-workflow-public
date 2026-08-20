@@ -4,7 +4,7 @@ Pre-commit hook scripts for PDK template compliance. These are referenced by `.p
 
 Each hook is a self-contained Python script that validates some aspect of a PDK repository's structure and configuration. Hooks use **errors** for required items (fail the hook) and **warnings** for recommended items (print but pass).
 
-## Available Hooks (15)
+## Available Hooks (16)
 
 ### Project Structure
 
@@ -36,6 +36,7 @@ Each hook is a self-contained Python script that validates some aspect of a PDK 
 | `check-template-drift` | `check_template_drift.py` | Enforces `.github/dependabot.yml` and `.github/workflows/*.yml` thin callers match upstream `templates/`. Ruff-style auto-fix: missing or drifted files are rewritten from the canonical template, exit 1; re-run exits 0. Conditionally enforces `sample-projects.yml` only in repos containing a `*--sample-projects/` directory. Deletes stale `release-drafter.yml` files if still present. No-ops inside pdk-ci-workflow itself. |
 | `check-hook-freshness` | `check_hook_freshness.py` | Detects a stale local pre-commit cache: compares the commit the installed hook checkout was cloned from (via the `.git` directory pre-commit leaves alongside the installed venv) against the current tip of this hook repo's `main`, and fails with instructions to run `pre-commit clean` if they differ. Warns instead of failing when offline or the check can't be determined. No-ops inside pdk-ci-workflow itself. |
 | `check-uv-lock-tracked` | `check_uv_lock_tracked.py` | For repos that use uv (Makefile `install` target invokes `uv`, `[tool.uv]` in pyproject.toml, or `uv.lock` already present), `uv.lock` exists and is tracked by git (not gitignored, not simply un-added). Fails if missing, or present but untracked. No-ops for non-uv repos and inside pdk-ci-workflow itself. |
+| `check-uv-lock-sync` | `check_uv_lock_sync.py` | Runs `uv lock --check` to verify `uv.lock` still matches `pyproject.toml`. Catches dependency edits committed without re-running `uv lock` — `uv sync` re-locks silently, so the drift otherwise surfaces only when an unrelated PR regenerates the lock. Warns instead of failing when uv can't be run. No-ops when `uv.lock` is absent and inside pdk-ci-workflow itself. |
 
 ### Multi-band
 

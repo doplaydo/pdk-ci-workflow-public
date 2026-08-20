@@ -180,6 +180,20 @@
     silently change behavior and break tests with no code change. No-ops
     for repos that don't use uv.
 
+- id: check-uv-lock-sync
+  name: Check uv.lock matches pyproject.toml
+  entry: check_uv_lock_sync
+  language: python
+  always_run: true
+  pass_filenames: false
+  additional_dependencies: ['uv>=0.12.3']
+  description: >
+    Runs `uv lock --check` to fail when uv.lock is out of sync with
+    pyproject.toml. `uv sync` re-locks silently, so editing dependencies
+    without running `uv lock` otherwise goes unnoticed until an unrelated
+    PR regenerates the lock. Warns (doesn't fail) when uv can't be run.
+    No-ops when uv.lock is absent.
+
 # =============================================================================
 # Third-party wrapper hooks
 #
