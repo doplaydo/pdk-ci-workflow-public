@@ -178,7 +178,7 @@ See [`hooks/README.md`](hooks/README.md) for detailed documentation.
 | `check-makefile-targets` | Required targets (install, test) and recommended targets (docs, build, test-force, update-pre, dev). Auto-fix: rewrites `dev` target's stale pre-commit-config fetch to `curl` against the public repo (exit 1; re-run exits 0) |
 | `check-workflows` | `.github/workflows/` has test_code.yml with pre-commit and test jobs |
 | `check-precommit-config` | `.pre-commit-config.yaml` includes required hooks (trailing-whitespace, end-of-file-fixer, ruff or ruff-lint, ruff-format) |
-| `check-template-drift` | `.github/dependabot.yml` and `.github/workflows/*.yml` thin callers match upstream templates. Auto-fixes by rewriting or creating files. Conditionally deploys `sample-projects.yml` in repos containing `*--sample-projects/` directories. Deletes stale `release-drafter.yml` files if still present. |
+| `check-template-drift` | `.github/dependabot.yml` and `.github/workflows/*.yml` thin callers match upstream templates. Auto-fixes by rewriting or creating files. Conditionally deploys `sample-projects.yml` in repos containing `*--sample-projects/` directories. Deletes deprecated templates (listed in `DEPRECATED_TEMPLATES`) if still present. |
 
 #### Multi-band
 
