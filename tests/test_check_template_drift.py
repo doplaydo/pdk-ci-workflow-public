@@ -127,6 +127,7 @@ class TestCheckTemplateDrift:
         assert not stale_workflow.exists()
         assert not stale_config.exists()
 
+
     def test_forbidden_env_files_get_deleted(self, pdk_root: Path) -> None:
         """.env and .env.local, if actually committed, get force-deleted."""
         import subprocess
