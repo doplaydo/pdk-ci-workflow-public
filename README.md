@@ -121,6 +121,7 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 | `test_coverage.yml` | coverage | Pytest with line coverage reporting |
 | `model_coverage.yml` | model-coverage | PDK model-to-cell coverage check |
 | `model_regression.yml` | model-regression | Model-specific regression tests |
+| `generate_nyanlib.yml` | generate | Extracts the `gfp` runtime from the `gfp-server` container image, runs it against the PDK, and produces `build/models.nyanlib` + SVG symbols; commits the output on pushes to `main` |
 | `update_badges.yml` | badges | Generate coverage, model, issue, and PR badges |
 
 PDK repos call these workflows from thin wrapper files in `.github/workflows/`, passing secrets explicitly. See `templates/.github/workflows/` for ready-to-copy wrappers.
@@ -135,7 +136,7 @@ PDK repos must have these secrets configured and forwarded explicitly in their w
 | `GFP_API_KEY` | test_code, test-sample-projects, pages, drc, test_coverage, model_coverage, model_regression, update_badges |
 | `ANTHROPIC_API_KEY` | claude-pr-review |
 | `SIMCLOUD_APIKEY` | pages |
-| `GITHUB_TOKEN` | issue, update_badges (automatic) |
+| `GITHUB_TOKEN` | issue, update_badges, generate_nyanlib (automatic) |
 
 
 ## Pre-commit Hooks
@@ -204,6 +205,7 @@ Reference configuration files are provided in `templates/` for onboarding new PD
 | `.github/workflows/test_coverage.yml` | Pytest with line coverage reporting |
 | `.github/workflows/model_coverage.yml` | PDK model-to-cell coverage check |
 | `.github/workflows/model_regression.yml` | Model-specific regression tests |
+| `.github/workflows/generate_nyanlib.yml` | Generate `build/models.nyanlib` + SVG symbols from the PDK's factories |
 | `.github/workflows/update_badges.yml` | Generate coverage, model, issue, and PR badges |
 | `.github/workflows/code-security.yml` | SAST (Semgrep) and SCA (Trivy) security scans |
 | `.github/dependabot.yml` | Monthly pip and github-actions dependency updates |

@@ -19,6 +19,7 @@ Minimal wrappers — each calls the upstream reusable workflow and forwards secr
 | `.github/workflows/test_coverage.yml` | Pytest with line coverage reporting |
 | `.github/workflows/model_coverage.yml` | PDK model-to-cell coverage check |
 | `.github/workflows/model_regression.yml` | Model-specific regression tests |
+| `.github/workflows/generate_nyanlib.yml` | Generate `build/models.nyanlib` + SVG symbols from the PDK's factories |
 | `.github/workflows/update_badges.yml` | Generate coverage, model, issue, and PR badges |
 | `.github/workflows/code-security.yml` | SAST (Semgrep) and SCA (Trivy) security scans |
 

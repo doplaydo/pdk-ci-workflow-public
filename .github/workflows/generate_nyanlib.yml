@@ -1,0 +1,100 @@
+name: Generate nyanlib
+
+on:
+  workflow_call:
+    inputs:
+      gfp_image:
+        description: 'gfp-server container image'
+        required: false
+        type: string
+        default: 'ghcr.io/doplaydo/gfp-server:dev'
+      timeout:
+        description: 'Server startup timeout (seconds)'
+        required: false
+        type: number
+        default: 600
+    secrets:
+
+permissions:
+  contents: write
+  packages: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-generate_nyanlib
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    name: Generate models.nyanlib + SVG symbols
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.head_ref || github.ref }}
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Install PDK
+        run: uv sync
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract gfp runtime from container
+        run: |
+          docker pull "${{ inputs.gfp_image }}"
+          CONTAINER=$(docker create "${{ inputs.gfp_image }}")
+          docker cp "$CONTAINER:/opt/gfp" ./gfp-runtime
+          docker rm "$CONTAINER"
+          chmod +x gfp-runtime/gfp gfp-runtime/uv
+
+      - name: Download generate_nyanlib script
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/scripts/generate_nyanlib.py" \
+            -o generate_nyanlib.py
+
+      - name: Generate nyanlib
+        run: |
+          python3 generate_nyanlib.py \
+            --gfp-bin gfp-runtime/gfp \
+            --project-root . \
+            --timeout ${{ inputs.timeout }}
+
+      - name: Upload server log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nyanlib-server-log
+          path: build/server.log
+          retention-days: 3
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nyanlib
+          path: |
+            build/models.nyanlib
+            build/symbols/
+          retention-days: 7
+
+      - name: Commit nyanlib (main branch only)
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f build/models.nyanlib
+          if [ -d build/symbols ]; then
+            git add -f build/symbols/
+          fi
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: regenerate models.nyanlib and SVG symbols"
+            git push
+          fi
