@@ -46,6 +46,7 @@ repos:
       - id: check-toml
       - id: ruff-lint
       - id: ruff-format
+      - id: pydocstyle
       - id: nbstripout
       - id: codespell
       - id: pretty-format-toml

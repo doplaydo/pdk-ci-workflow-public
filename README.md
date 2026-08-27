@@ -21,7 +21,7 @@ This repository provides reusable automation tooling for Process Design Kit (PDK
 This repository provides four complementary automation patterns:
 
 - **Reusable GitHub Actions Workflows** - Complete CI/CD jobs for testing, docs, releases, and code review
-- **Pre-commit Hooks** - 16 PDK compliance checks plus 10 third-party tool wrappers (ruff, codespell, etc.) with centrally controlled versions
+- **Pre-commit Hooks** - 18 PDK compliance checks plus 11 third-party tool wrappers (ruff, pydocstyle, codespell, etc.) with centrally controlled versions
 - **Templates** - Reference configuration files for onboarding new PDK repos
 - **Composite Actions** - Shared step sequences for flexible workflow composition (in development)
 
@@ -117,11 +117,12 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 | `pages.yml` | build-docs | Sphinx docs build and Pages artifact upload. The caller's wrapper supplies the `deploy-docs` job that publishes to GitHub Pages |
 | `claude-pr-review.yml` | review | AI code review via Claude Sonnet 4. Runs once on PR open/reopen; re-run on demand by commenting `/claude-api review` |
 | `drc.yml` | drc | Design Rule Check with GFP and badge generation |
+| `gds-xor.yml` | gds-xor | Per-layer XOR of every `*.gds` changed by a PR: a downloadable XOR GDS plus a PDF report with one page per differing layer and the difference area in um^2 |
 | `issue.yml` | add-label | Auto-labels issues with "pdk" tag |
 | `test_coverage.yml` | coverage | Pytest with line coverage reporting |
 | `model_coverage.yml` | model-coverage | PDK model-to-cell coverage check |
 | `model_regression.yml` | model-regression | Model-specific regression tests |
-| `generate_nyanlib.yml` | generate | Extracts the `gfp` runtime from the `gfp-server` container image, runs it against the PDK, and produces `build/models.nyanlib` + SVG symbols; commits the output on pushes to `main` |
+| `generate_nyanlib.yml` | generate | Runs `gfp serve` inside the `gfp-server` container against the PDK, resolves the factories owned by that PDK, and produces `build/models.nyanlib` + SVG symbols; opens an update PR only on a manual `workflow_dispatch` from `main` |
 | `update_badges.yml` | badges | Generate coverage, model, issue, and PR badges |
 
 PDK repos call these workflows from thin wrapper files in `.github/workflows/`, passing secrets explicitly. See `templates/.github/workflows/` for ready-to-copy wrappers.
@@ -133,7 +134,7 @@ PDK repos must have these secrets configured and forwarded explicitly in their w
 
 | Secret | Used by |
 |--------|---------|
-| `GFP_API_KEY` | test_code, test-sample-projects, pages, drc, test_coverage, model_coverage, model_regression, update_badges |
+| `GFP_API_KEY` | test_code, test-sample-projects, pages, drc, test_coverage, model_coverage, model_regression, update_badges, generate_nyanlib |
 | `ANTHROPIC_API_KEY` | claude-pr-review |
 | `SIMCLOUD_APIKEY` | pages |
 | `GITHUB_TOKEN` | issue, update_badges, generate_nyanlib (automatic) |
@@ -143,8 +144,8 @@ PDK repos must have these secrets configured and forwarded explicitly in their w
 
 Two types of hooks are defined in `.pre-commit-hooks.yaml`:
 
-- **16 PDK compliance hooks** (`hooks/*.py`) — validate repo structure, cells, tech, tests, etc.
-- **10 third-party wrapper hooks** — ruff, codespell, nbstripout, trailing-whitespace, etc. with versions pinned via `additional_dependencies` so they're controlled centrally
+- **18 PDK compliance hooks** (`hooks/*.py`) — validate repo structure, cells, tech, tests, etc.
+- **11 third-party wrapper hooks** — ruff, pydocstyle, codespell, nbstripout, trailing-whitespace, etc. with versions pinned via `additional_dependencies` so they're controlled centrally
 
 All hooks use `always_run: true` and `pass_filenames: false` (repo-level checks). Errors = failure, warnings = pass but alert.
 
@@ -178,7 +179,7 @@ See [`hooks/README.md`](hooks/README.md) for detailed documentation.
 | `check-test-structure` | `tests/` directory with test files, GDS reference dirs, `difftest()` calls, `data_regression` usage |
 | `check-makefile-targets` | Required targets (install, test) and recommended targets (docs, build, test-force, update-pre, dev). Auto-fix: rewrites `dev` target's stale pre-commit-config fetch to `curl` against the public repo (exit 1; re-run exits 0) |
 | `check-workflows` | `.github/workflows/` has test_code.yml with pre-commit and test jobs |
-| `check-precommit-config` | `.pre-commit-config.yaml` includes required hooks (trailing-whitespace, end-of-file-fixer, ruff or ruff-lint, ruff-format) |
+| `check-precommit-config` | `.pre-commit-config.yaml` includes required hooks (trailing-whitespace, end-of-file-fixer, ruff or ruff-lint, ruff-format, pydocstyle) |
 | `check-template-drift` | `.github/dependabot.yml` and `.github/workflows/*.yml` thin callers match upstream templates. Auto-fixes by rewriting or creating files. Conditionally deploys `sample-projects.yml` in repos containing `*--sample-projects/` directories. Deletes deprecated templates (listed in `DEPRECATED_TEMPLATES`) if still present. |
 
 #### Multi-band
@@ -201,6 +202,7 @@ Reference configuration files are provided in `templates/` for onboarding new PD
 | `.github/workflows/pages.yml` | Sphinx docs build and GitHub Pages deployment |
 | `.github/workflows/claude-pr-review.yml` | AI code review via Claude — runs once on PR open/reopen; re-run on demand with `/claude-api review` comment |
 | `.github/workflows/drc.yml` | Design Rule Check via GFP |
+| `.github/workflows/gds-xor.yml` | Per-layer XOR report for GDS files changed by a PR |
 | `.github/workflows/issue.yml` | Auto-label PDK issues |
 | `.github/workflows/test_coverage.yml` | Pytest with line coverage reporting |
 | `.github/workflows/model_coverage.yml` | PDK model-to-cell coverage check |
