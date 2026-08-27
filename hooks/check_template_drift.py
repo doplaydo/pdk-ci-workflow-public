@@ -23,6 +23,7 @@ TEMPLATES: list[str] = [
     ".github/dependabot.yml",
     ".github/workflows/claude-pr-review.yml",
     ".github/workflows/drc.yml",
+    ".github/workflows/gds-xor.yml",
     ".github/workflows/issue.yml",
     ".github/workflows/model_coverage.yml",
     ".github/workflows/model_regression.yml",

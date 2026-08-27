@@ -11,6 +11,7 @@ REQUIRED_HOOK_IDS: set[str] = {
     "end-of-file-fixer",
     "trailing-whitespace",
     "ruff-format",
+    "pydocstyle",
 }
 
 # At least one ID from each set must be present (handles old/new configs).
