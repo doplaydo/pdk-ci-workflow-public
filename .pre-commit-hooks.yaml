@@ -267,6 +267,16 @@
   description: >
     Runs ruff formatter. Uses pyproject.toml for configuration.
 
+- id: pydocstyle
+  name: Check docstring arguments
+  entry: pydocstyle --select=D417
+  language: python
+  types_or: [python, pyi]
+  additional_dependencies: ['pydocstyle==6.3.0']
+  description: >
+    Verifies Google-style Args sections document every positional and
+    keyword-only function argument. Does not check *args/**kwargs.
+
 - id: nbstripout
   name: Strip notebook output
   entry: nbstripout
