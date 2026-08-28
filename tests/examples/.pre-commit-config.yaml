@@ -17,6 +17,12 @@ repos:
     name: ruff-lint
     types:
     - python
+  - entry: pydocstyle --select=D417
+    id: pydocstyle
+    language: system
+    name: pydocstyle
+    types:
+    - python
   repo: local
 - hooks:
   - id: nbstripout

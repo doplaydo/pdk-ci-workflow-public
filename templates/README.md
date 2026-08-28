@@ -15,6 +15,7 @@ Minimal wrappers — each calls the upstream reusable workflow and forwards secr
 | `.github/workflows/pages.yml` | Sphinx docs build + GitHub Pages |
 | `.github/workflows/claude-pr-review.yml` | AI code review via Claude — runs once on PR open/reopen; re-run on demand with `/claude-api review` comment |
 | `.github/workflows/drc.yml` | Design Rule Check via GFP |
+| `.github/workflows/gds-xor.yml` | Per-layer XOR report for GDS files changed by a PR |
 | `.github/workflows/issue.yml` | Auto-label PDK issues |
 | `.github/workflows/test_coverage.yml` | Pytest with line coverage reporting |
 | `.github/workflows/model_coverage.yml` | PDK model-to-cell coverage check |

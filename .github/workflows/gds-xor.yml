@@ -1,0 +1,220 @@
+name: GDS XOR
+on:
+  workflow_call:
+    inputs:
+      pathspec:
+        type: string
+        required: false
+        default: "*.gds"
+        description: 'Git pathspec limiting which GDS files are compared (default: every *.gds)'
+      max-files:
+        type: number
+        required: false
+        default: 25
+        description: 'Skip the report when more than this many GDS files changed (keeps the PDF reviewable)'
+      comment:
+        type: boolean
+        required: false
+        default: true
+        description: 'Post/update a sticky PR comment with the per-layer area table'
+      max-images:
+        type: number
+        required: false
+        default: 12
+        description: 'How many per-layer XOR images to embed in the comment (-1 for all)'
+permissions:
+  contents: read
+  pull-requests: write
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-gds-xor
+  cancel-in-progress: true
+jobs:
+  gds-xor:
+    name: GDS XOR report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Collect changed GDS files
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PATHSPEC: ${{ inputs.pathspec }}
+          MAX_FILES: ${{ inputs.max-files }}
+        run: |
+          set -euo pipefail
+          # --no-renames so a moved GDS is reported as one delete plus one add;
+          # both paths then resolve on the side they exist on.
+          git diff --name-only --no-renames "$BASE_SHA" HEAD -- "$PATHSPEC" > changed.txt || true
+          count=$(wc -l < changed.txt | tr -d ' ')
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "Changed GDS files ($count):"
+          cat changed.txt
+          if [ "$count" -eq 0 ]; then
+            echo "skip_reason=no GDS files changed" >> "$GITHUB_OUTPUT"
+          elif [ "$count" -gt "$MAX_FILES" ]; then
+            echo "skip_reason=$count GDS files changed, over the max-files limit of $MAX_FILES" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Note skipped run
+        if: steps.changed.outputs.skip_reason
+        env:
+          SKIP_REASON: ${{ steps.changed.outputs.skip_reason }}
+        run: echo "Skipping XOR report:" "$SKIP_REASON"
+      - name: Materialise the base revision of each changed GDS
+        if: ${{ !steps.changed.outputs.skip_reason }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p base
+          while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            mkdir -p "base/$(dirname "$path")"
+            # Absent at the base revision means the PR adds this file; the
+            # report treats a missing side as an empty layout.
+            git show "$BASE_SHA:$path" > "base/$path" 2>/dev/null || rm -f "base/$path"
+          done < changed.txt
+      - name: Download gds_xor_report script
+        if: ${{ !steps.changed.outputs.skip_reason }}
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/scripts/gds_xor_report.py" \
+            -o gds_xor_report.py
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        if: ${{ !steps.changed.outputs.skip_reason }}
+        with:
+          python-version: "3.12"
+      - name: Build XOR report
+        if: ${{ !steps.changed.outputs.skip_reason }}
+        env:
+          MAX_IMAGES: ${{ inputs.max-images }}
+        run: |
+          set -euo pipefail
+          # --no-project: the report only needs klayout and matplotlib, so it
+          # runs in its own throwaway env instead of the PDK's.
+          mapfile -t files < changed.txt
+          uv run --no-project --with klayout --with matplotlib \
+            python gds_xor_report.py \
+              --old-root base \
+              --new-root . \
+              --outdir build/gds-xor \
+              --artifact-name gds-xor-report \
+              --max-images "$MAX_IMAGES" \
+              "${files[@]}"
+      - name: Upload XOR report
+        if: ${{ !steps.changed.outputs.skip_reason }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gds-xor-report
+          path: build/gds-xor/
+          retention-days: 14
+      - name: Comment on the pull request
+        # A pull_request run from a fork gets a read-only token, so the comment
+        # would fail; the artifact is still uploaded either way.
+        if: >-
+          inputs.comment
+          && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SKIP_REASON: ${{ steps.changed.outputs.skip_reason }}
+        run: |
+          set -euo pipefail
+          marker="<!-- gds-xor-report -->"
+
+          if [ -z "$SKIP_REASON" ]; then
+            # There is no first-party API for comment attachments; this is the
+            # endpoint the web UI uses when an image is dragged into a comment,
+            # and the only host whose URLs render inline for a private repo.
+            # Being undocumented, every failure here is non-fatal: the image is
+            # dropped and the table still gets posted. That has to hold for the
+            # plumbing around the upload too - nothing between here and the
+            # comment may abort the step under `set -e`, or a hiccup costs the
+            # whole report instead of one image.
+            upload_token="${UPLOAD_TOKEN:-}"
+            [ -n "$upload_token" ] || upload_token="$GH_TOKEN"
+            repo_id=$(gh api "repos/$GITHUB_REPOSITORY" --jq .id || true)
+            : > uploads.tsv
+            grep -o 'IMAGE:[^)]*' build/gds-xor/comment.md | sed 's/^IMAGE://' | sort -u \
+              > wanted.txt || true
+            while IFS= read -r rel; do
+              [ -n "$rel" ] || continue
+              # Bounded: a stalled connection to an undocumented endpoint must
+              # not hold the job open to the runner timeout.
+              response=$(curl -sS -X POST --max-time 60 --retry 2 \
+                --data-binary "@build/gds-xor/$rel" \
+                -H "Authorization: Bearer $upload_token" \
+                -H "Accept: application/json" \
+                "https://uploads.github.com/user-attachments/assets?name=$(basename "$rel")&content_type=image/png&repository_id=$repo_id" \
+                || true)
+              url=$(printf '%s' "$response" \
+                | grep -oE 'https://github\.com/user-attachments/assets/[A-Za-z0-9-]+' \
+                | head -1 || true)
+              if [ -n "$url" ]; then
+                printf '%s\t%s\n' "$rel" "$url" >> uploads.tsv
+              else
+                echo "::warning::could not upload $rel; its image is omitted from the comment"
+              fi
+            done < wanted.txt
+            echo "Uploaded $(wc -l < uploads.tsv | tr -d ' ') of $(wc -l < wanted.txt | tr -d ' ') image(s)"
+
+            # `if` rather than a bare call: under `set -e` a crash in here would
+            # otherwise kill the step instead of falling back to the table.
+            if python3 - build/gds-xor/comment.md uploads.tsv > resolved.tmp <<'PY'
+          import sys
+
+          body, table = sys.argv[1], sys.argv[2]
+          urls = dict(
+              line.rstrip("\n").split("\t", 1)
+              for line in open(table, encoding="utf-8")
+              if "\t" in line
+          )
+          for line in open(body, encoding="utf-8"):
+              if "](IMAGE:" in line:
+                  rel = line.split("](IMAGE:", 1)[1].rsplit(")", 1)[0]
+                  # An image that failed to upload says so, rather than leaving
+                  # a broken placeholder behind.
+                  line = (
+                      line.replace("IMAGE:" + rel, urls[rel])
+                      if rel in urls
+                      else "_(image upload failed; this layer's page is in the PDF)_\n"
+                  )
+              sys.stdout.write(line)
+          PY
+            then
+              mv resolved.tmp resolved.md
+            else
+              echo "::warning::could not assemble the image sections; posting the table alone"
+              cp build/gds-xor/summary.md resolved.md
+            fi
+          fi
+
+          {
+            echo "$marker"
+            if [ -n "$SKIP_REASON" ]; then
+              echo "## GDS XOR report"
+              echo
+              echo "Not generated: $SKIP_REASON."
+            else
+              cat resolved.md
+              echo
+              echo "[Download the XOR GDS and the PDF report]($RUN_URL) (artifact \`gds-xor-report\`)."
+            fi
+          } > comment.md
+
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
+            --jq "[.[] | select(.body | startswith(\"$marker\")) | .id] | first // empty")
+
+          if [ -n "$existing" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" \
+              -F body=@comment.md > /dev/null
+            echo "Updated comment $existing"
+          elif [ -n "$SKIP_REASON" ]; then
+            # Nothing to say and nothing to correct: don't open with noise.
+            echo "Nothing to report and no existing comment; staying quiet"
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+              -F body=@comment.md > /dev/null
+            echo "Posted a new comment"
+          fi

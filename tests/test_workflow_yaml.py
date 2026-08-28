@@ -12,7 +12,10 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
+
+from hooks._utils import apply_sync_markers
 
 # Repo root is two levels up from tests/
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -136,6 +139,47 @@ class TestTemplateWorkflowYaml:
                     f"{path.name} job '{job_name}' uses '{uses}' which does "
                     f"not reference {allowed_orgs}"
                 )
+
+
+# ── Marker resolution ──────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("keep", ["private", "public"])
+@pytest.mark.parametrize(
+    "path",
+    _all_workflow_files(WORKFLOWS_DIR) + _all_workflow_files(TEMPLATES_DIR),
+    ids=lambda p: f"{p.parent.parent.parent.name}-{p.name}",
+)
+def test_workflows_stay_valid_yaml_after_marker_resolution(
+    path: Path, keep: str
+) -> None:
+    """A workflow that parses in this repo can still be broken for the other
+    audience: wrapping only the *entries* under a mapping key (``secrets:``,
+    ``with:``) in SYNC-PRIVATE leaves that key dangling once the region is
+    dropped. Wrap the key itself in that case.
+    """
+    resolved = apply_sync_markers(path.read_text(), keep=keep)
+    # Only the marker syntax must be gone; prose that merely names the markers
+    # (as release.yml does in a comment) is fine.
+    markers = (
+        "SYNC-PRIVATE:begin",
+        "SYNC-PRIVATE:end",
+        "SYNC-PUBLIC:begin",
+        "SYNC-PUBLIC:end",
+    )
+    leftover = [marker for marker in markers if marker in resolved]
+    assert not leftover, (
+        f"{path.name}: {leftover} survived resolution for the {keep} audience"
+    )
+    try:
+        data = yaml.safe_load(resolved)
+    except yaml.YAMLError as error:  # pragma: no cover - failure path
+        raise AssertionError(
+            f"{path.name} is not valid YAML for the {keep} audience: {error}"
+        ) from error
+    assert data is not None, (
+        f"{path.name} resolved to an empty document for the {keep} audience"
+    )
 
 
 
