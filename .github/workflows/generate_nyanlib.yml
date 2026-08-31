@@ -9,92 +9,202 @@ on:
         type: string
         default: 'ghcr.io/doplaydo/gfp-server:dev'
       timeout:
-        description: 'Server startup timeout (seconds)'
+        description: >-
+          Timeout in seconds, reused across phases: server startup, each
+          resolveFactories batch call, and the Phase 4 drain wait.
         required: false
         type: number
-        default: 600
+        default: 3600
+      script_ref:
+        description: >-
+          Ref to fetch scripts/generate_nyanlib.py from. A reusable
+          workflow's own github context always reflects the caller's ref,
+          not its own (github.com/actions/toolkit#1264), so this can't be
+          auto-detected - override it only when testing a change to this
+          workflow file from a branch before merging, so the fetched script
+          matches.
+        required: false
+        type: string
+        default: 'main'
     secrets:
+      GFP_API_KEY:
+        required: false
+
+env:
+  GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
+  # Override symbol_pool_size() default of 2 (crates/gfp-server/src/worker/manager.rs)
+  GFP_SYMBOL_WORKERS: '4'
 
 permissions:
   contents: write
   packages: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-generate_nyanlib
-  cancel-in-progress: true
+  pull-requests: write
 
 jobs:
-  generate:
-    name: Generate models.nyanlib + SVG symbols
+  discover:
     runs-on: ubuntu-latest
+    outputs:
+      project-dirs: ${{ steps.find.outputs.dirs }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: find
+        run: |
+          dirs=$(find . -maxdepth 3 -name 'pyproject.toml' \
+            -path '*--sample-projects/*' ! -path '*/.venv/*' \
+            | sed 's|^\./||; s|/pyproject.toml||' \
+            | sort \
+            | jq -Rcs '[split("\n")[] | select(. != "")]')
+          echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
+
+  generate:
+    name: Generate models.nyanlib + SVG symbols (${{ matrix.project-dir }})
+    needs: discover
+    if: needs.discover.outputs.project-dirs != '' && needs.discover.outputs.project-dirs != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project-dir: ${{ fromJSON(needs.discover.outputs.project-dirs) }}
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-generate_nyanlib-${{ matrix.project-dir }}
+      cancel-in-progress: true
+    env:
+      PROJECT_DIR: ${{ matrix.project-dir }}
+      # The private GFP portal index shadows PyPI package names. uv's default
+      # "first-index" strategy would refuse to fall back to PyPI, breaking
+      # resolution of packages like doroutes and h5netcdf. Consider all indexes
+      # so the correct versions are found wherever they live.
+      UV_INDEX_STRATEGY: unsafe-best-match
+    # Run inside the gfp-server image itself, matching gdsfactoryplus's own
+    # documented consumption pattern (specs/container_publishing.md). /opt/gfp
+    # in the image ships only libpython3.12.so, not a stdlib tree - the base
+    # image (python:3.12-slim) is what supplies /usr/local/lib/python3.12.
+    # Extracting just /opt/gfp onto a bare Ubuntu runner and pairing it with
+    # an unrelated Python (system or uv-managed) fails identically either
+    # way: ModuleNotFoundError: No module named '_csv' (#312), because no
+    # externally-sourced Python is guaranteed ABI/layout-compatible with
+    # gfp's bundled libpython. Running inside the image sidesteps the whole
+    # class of mismatch - there's only one Python here.
+    container:
+      image: ${{ inputs.gfp_image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Install git, gh CLI, and build tools
+        # python:3.12-slim ships none of these. git/gh are needed for the
+        # checkout, script download, and the PR-landing step below.
+        # build-essential is needed because some PDK dependencies have no
+        # wheel matching this exact Python build and fall back to a source
+        # build (`No such file or directory: 'gcc'` without it).
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git curl ca-certificates gnupg build-essential
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+          chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            > /etc/apt/sources.list.d/github-cli.list
+          apt-get update
+          apt-get install -y gh
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.head_ref || github.ref }}
 
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          python-version: '3.12'
+      - id: slug
+        name: Compute project-dir slug
+        run: |
+          slug=$(echo "$PROJECT_DIR" | tr '/' '-' | sed 's/^-*//; s/-*$//')
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+
+      - id: pdk-package
+        name: Read PDK package name
+        run: |
+          python3 <<'PY' >> "$GITHUB_OUTPUT"
+          import pathlib
+          import tomllib
+
+          pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          print(f"package={pyproject['project']['name']}")
+          PY
+
+      - name: Configure GFP portal index
+        run: uv run --no-project --with gdsfactoryplus gfp configure --api-key "$GFP_API_KEY" --uv
 
       - name: Install PDK
-        run: uv sync
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract gfp runtime from container
-        run: |
-          docker pull "${{ inputs.gfp_image }}"
-          CONTAINER=$(docker create "${{ inputs.gfp_image }}")
-          docker cp "$CONTAINER:/opt/gfp" ./gfp-runtime
-          docker rm "$CONTAINER"
-          chmod +x gfp-runtime/gfp gfp-runtime/uv
+        working-directory: ${{ matrix.project-dir }}
+        env:
+          PDK_PACKAGE: ${{ steps.pdk-package.outputs.package }}
+        # Sample-project tests may use tool.uv.sources to point at the checked-out
+        # repo. Nyanlib generation intentionally consumes the published PDK.
+        run: uv sync --no-sources-package "$PDK_PACKAGE"
 
       - name: Download generate_nyanlib script
+        env:
+          SCRIPT_REF: ${{ inputs.script_ref }}
         run: |
-          curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/scripts/generate_nyanlib.py" \
+          curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/$SCRIPT_REF/scripts/generate_nyanlib.py" \
             -o generate_nyanlib.py
 
       - name: Generate nyanlib
         run: |
           python3 generate_nyanlib.py \
-            --gfp-bin gfp-runtime/gfp \
-            --project-root . \
+            --gfp-bin "$(command -v gfp)" \
+            --project-root "$PROJECT_DIR" \
             --timeout ${{ inputs.timeout }}
 
       - name: Upload server log on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: nyanlib-server-log
-          path: build/server.log
+          name: nyanlib-server-log-${{ steps.slug.outputs.slug }}
+          path: ${{ matrix.project-dir }}/build/server.log
           retention-days: 3
 
       - name: Upload build artifacts
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: nyanlib
+          name: nyanlib-${{ steps.slug.outputs.slug }}
           path: |
-            build/models.nyanlib
-            build/symbols/
+            ${{ matrix.project-dir }}/build/models.nyanlib
+            ${{ matrix.project-dir }}/build/symbols/
           retention-days: 7
 
-      - name: Commit nyanlib (main branch only)
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+      - name: Open nyanlib update PR (manual dispatch only)
+        # main is rule-protected org-wide: no direct push can land here, ever
+        # (pull_request rule, required_approving_review_count: 1, no bypass
+        # actor). Only run this on an explicit manual dispatch, not on every
+        # push to main - a "regenerate nyanlib" PR needing human approval
+        # after every commit would be spam, not a warm-start cache refresh.
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f build/models.nyanlib
-          if [ -d build/symbols ]; then
-            git add -f build/symbols/
+          git add -f "$PROJECT_DIR/build/models.nyanlib"
+          if [ -d "$PROJECT_DIR/build/symbols" ]; then
+            git add -f "$PROJECT_DIR/build/symbols/"
           fi
           if git diff --cached --quiet; then
             echo "No changes to commit"
+            exit 0
+          fi
+
+          BRANCH="chore/update-nyanlib-${{ steps.slug.outputs.slug }}"
+          git checkout -B "$BRANCH"
+          git commit -m "chore: regenerate models.nyanlib and SVG symbols ($PROJECT_DIR)"
+          git push -f origin "$BRANCH"
+
+          existing=$(gh pr list --head "$BRANCH" --base main --state open --json url --jq '.[0].url // empty')
+          if [ -z "$existing" ]; then
+            gh pr create --base main --head "$BRANCH" \
+              --title "chore: regenerate models.nyanlib and SVG symbols ($PROJECT_DIR)" \
+              --body "Automated nyanlib + SVG symbol regeneration for \`$PROJECT_DIR\`, triggered by manual workflow dispatch."
           else
-            git commit -m "chore: regenerate models.nyanlib and SVG symbols"
-            git push
+            echo "PR already open: $existing"
           fi
