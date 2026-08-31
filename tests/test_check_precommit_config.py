@@ -77,6 +77,21 @@ class TestCheckPrecommitConfig:
         })
         assert main() == 1
 
+    def test_missing_pydocstyle_fails(self, pdk_root: Path) -> None:
+        """pydocstyle D417 is required for documented function arguments."""
+        _write_config(pdk_root, {
+            "repos": [{
+                "repo": "local",
+                "hooks": [
+                    {"id": "end-of-file-fixer"},
+                    {"id": "trailing-whitespace"},
+                    {"id": "ruff-format"},
+                    {"id": "ruff-lint"},
+                ],
+            }]
+        })
+        assert main() == 1
+
     def test_old_ruff_id_accepted(self, pdk_root: Path) -> None:
         """The old 'ruff' hook ID should also satisfy the requirement."""
         _write_config(pdk_root, {
@@ -87,6 +102,7 @@ class TestCheckPrecommitConfig:
                     {"id": "trailing-whitespace"},
                     {"id": "ruff-format"},
                     {"id": "ruff"},
+                    {"id": "pydocstyle"},
                 ],
             }]
         })
@@ -102,6 +118,7 @@ class TestCheckPrecommitConfig:
                     {"id": "trailing-whitespace"},
                     {"id": "ruff-format"},
                     {"id": "ruff-lint"},
+                    {"id": "pydocstyle"},
                 ],
             }]
         })
@@ -125,6 +142,7 @@ class TestCheckPrecommitConfig:
                     "hooks": [
                         {"id": "ruff-format"},
                         {"id": "ruff"},
+                        {"id": "pydocstyle"},
                     ],
                 },
             ]
