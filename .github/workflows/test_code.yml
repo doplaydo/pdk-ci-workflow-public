@@ -43,10 +43,14 @@ jobs:
           python3 << 'PYEOF'
         import yaml
         with open('.repo-exclude') as f:
-            exclude = f.read().strip()
+            repo_exclude = f.read().strip()
         with open('.pre-commit-config.yaml') as f:
             cfg = yaml.safe_load(f)
-        cfg['exclude'] = exclude
+        # Union, don't replace: the canonical exclude carries fleet-wide
+        # exemptions (references/, generated sample-project build/ output) that
+        # a repo-local exclude must extend rather than silently drop.
+        canonical = (cfg.get('exclude') or '').strip()
+        cfg['exclude'] = f'(?:{canonical})|(?:{repo_exclude})' if canonical else repo_exclude
         with open('.pre-commit-config.yaml', 'w') as f:
             yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
         PYEOF

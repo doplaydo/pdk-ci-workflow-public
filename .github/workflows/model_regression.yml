@@ -1,6 +1,11 @@
 name: Model Regression
 on:
   workflow_call:
+    inputs:
+      enforce-model-jittability:
+        description: Fail CI when a concrete model is not JAX JIT-traceable
+        type: boolean
+        default: false
     secrets:
       GFP_API_KEY:
         required: false
@@ -19,6 +24,11 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: make install
+      - name: Check model JAX jittability
+        uses: doplaydo/pdk-ci-workflow-public/actions/check_model_jittability@main
+        with:
+          enforce: ${{ inputs.enforce-model-jittability }}
+        continue-on-error: ${{ ! inputs.enforce-model-jittability }}
       - name: Run model regression tests
         env:
           PYTEST_ADDOPTS: "-k model --tb=short"

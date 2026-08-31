@@ -2,8 +2,9 @@
 """Generate models.nyanlib and SVG symbols for a GDSFactory PDK.
 
 Spawns ``gfp serve``, waits for the cold-start nyanlib cycle to finish,
-triggers on-demand SVG symbol generation for every indexed factory, waits
-for the resulting nyanlib cycle to complete, then exits.
+optionally filters the indexed factories down to those owned by this PDK
+(``--filter-to-pdk``), triggers on-demand SVG symbol generation for those in
+batches, waits for the resulting nyanlib cycle to complete, then exits.
 
 Output (relative to project root)::
 
@@ -25,6 +26,8 @@ import sys
 import threading
 import time
 from pathlib import Path
+
+import tomllib
 
 
 class StdioRpc:
@@ -97,8 +100,31 @@ class StdioRpc:
         return buf
 
 
+_FATAL_WORKER_ERROR = "Failed to initialize Python"
+
+
+def _check_fatal_worker_error(log_path: Path) -> str | None:
+    """Return the first line reporting a worker Python-init failure, if any.
+
+    A worker's embedded interpreter failing to initialize is systemic, not a
+    one-off — every worker hits it identically and retries forever. Detect it
+    from the server log so the job fails in seconds instead of waiting out
+    the full timeout.
+    """
+    if not log_path.is_file():
+        return None
+    with log_path.open(encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if _FATAL_WORKER_ERROR in line:
+                return line.strip()
+    return None
+
+
 def wait_ready(
-    rpc: StdioRpc, proc: subprocess.Popen, timeout: float = 600
+    rpc: StdioRpc,
+    proc: subprocess.Popen,
+    log_path: Path,
+    timeout: float = 600,
 ) -> None:
     """Poll getInfo until indexing and nyanlib_generating are both false."""
     deadline = time.monotonic() + timeout
@@ -122,6 +148,16 @@ def wait_ready(
                 return
         except (TimeoutError, OSError, json.JSONDecodeError) as exc:
             print(f"  poll: {exc}", flush=True)
+        fatal_line = _check_fatal_worker_error(log_path)
+        if fatal_line:
+            print(
+                f"  !! fatal worker error: {fatal_line}\n"
+                "Every worker fails identically on interpreter init — this "
+                "will not resolve by waiting (see build/server.log).",
+                file=sys.stderr,
+                flush=True,
+            )
+            sys.exit(1)
         if proc.poll() is not None:
             print(
                 f"gfp serve exited with code {proc.returncode}",
@@ -138,12 +174,54 @@ def wait_ready(
     sys.exit(1)
 
 
+def _pdk_module_name(project_root: Path) -> str:
+    """Return the PDK's module name from pyproject.toml's [tool.gdsfactoryplus]."""
+    pyproject_path = project_root / "pyproject.toml"
+    with pyproject_path.open("rb") as f:
+        cfg = tomllib.load(f)
+    gfp_cfg = cfg.get("tool", {}).get("gdsfactoryplus", {})
+    name = gfp_cfg.get("pdk", {}).get("name") or gfp_cfg.get("name")
+    if not name:
+        sys.exit(
+            f"No tool.gdsfactoryplus.pdk.name or tool.gdsfactoryplus.name found "
+            f"in {pyproject_path}"
+        )
+    return name
+
+
+def _owns(fqn: str, pdk_name: str) -> bool:
+    """Return True if `fqn` belongs to the PDK named `pdk_name`."""
+    return fqn == pdk_name or fqn.startswith(pdk_name + ".")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gfp-bin", required=True, help="Path to the gfp binary")
     parser.add_argument("--project-root", default=".", help="PDK project root")
     parser.add_argument(
-        "--timeout", type=int, default=600, help="Startup timeout in seconds"
+        "--timeout",
+        type=int,
+        default=600,
+        help=(
+            "Timeout in seconds, reused across phases: server startup, each "
+            "resolveFactories batch call, and the Phase 4 drain wait"
+        ),
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=50,
+        help="Factories per resolveFactories call",
+    )
+    parser.add_argument(
+        "--filter-to-pdk",
+        action="store_true",
+        help=(
+            "Resolve only factories owned by this PDK (per "
+            "[tool.gdsfactoryplus(.pdk)].name in pyproject.toml), skipping "
+            "built-in gdsfactory cells and sample-project cells. Off by "
+            "default: resolves every indexed factory."
+        ),
     )
     args = parser.parse_args()
 
@@ -174,7 +252,7 @@ def main() -> None:
     try:
         # Phase 1 — wait for cold-start indexing + skeleton nyanlib
         print("Phase 1: Waiting for indexing + cold-start nyanlib…", flush=True)
-        wait_ready(rpc, proc, timeout=args.timeout)
+        wait_ready(rpc, proc, log_path, timeout=args.timeout)
         print("Phase 1 complete.", flush=True)
 
         # Phase 2 — discover all factories
@@ -182,27 +260,85 @@ def main() -> None:
         resp = rpc.call("listFactories", {}, timeout=30)
         factories = resp.get("result", {}).get("factories", [])
         fqns = [f["qualified_name"] for f in factories if f.get("is_factory")]
-        print(f"  {len(fqns)} factories found", flush=True)
 
         if not fqns:
             print("No factories indexed — skipping SVG generation.", flush=True)
         else:
-            # Phase 3 — resolve all factories with SVG symbols
+            if args.filter_to_pdk:
+                pdk_name = _pdk_module_name(project_root)
+                owned = [fqn for fqn in fqns if _owns(fqn, pdk_name)]
+                print(
+                    f"  {len(fqns)} factories found, {len(owned)} owned by "
+                    f"'{pdk_name}' — resolving those",
+                    flush=True,
+                )
+                if not owned:
+                    print(
+                        f"No factories owned by '{pdk_name}' out of "
+                        f"{len(fqns)} indexed — check "
+                        "[tool.gdsfactoryplus(.pdk)].name in pyproject.toml",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    sys.exit(1)
+            else:
+                owned = fqns
+                pdk_name = None
+                print(f"  {len(fqns)} factories found — resolving all", flush=True)
+
+            # Phase 3 — resolve the PDK's own factories with SVG symbols
             print(
-                f"Phase 3: Resolving {len(fqns)} factories (renderSymbols)…",
+                f"Phase 3: Resolving {len(owned)} factories (renderSymbols)…",
                 flush=True,
             )
-            resp = rpc.call(
-                "resolveFactories",
-                {"fqns": fqns, "renderSymbols": True},
-                timeout=300,
-            )
-            resolved = resp.get("result", {}).get("resolved", [])
-            print(f"  {len(resolved)}/{len(fqns)} resolved", flush=True)
+            batch_size = args.batch_size
+            n_batches = (len(owned) + batch_size - 1) // batch_size
+            total_resolved = 0
+            for i in range(1, n_batches + 1):
+                chunk = owned[(i - 1) * batch_size : i * batch_size]
+                try:
+                    resp = rpc.call(
+                        "resolveFactories",
+                        {"fqns": chunk, "renderSymbols": True},
+                        timeout=args.timeout,
+                    )
+                except TimeoutError:
+                    print(
+                        f"  batch {i}/{n_batches} timed out",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    raise
+                resp_error = resp.get("error")
+                if resp_error:
+                    print(
+                        f"  batch {i}/{n_batches} returned an error: {resp_error}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    raise RuntimeError(
+                        f"resolveFactories batch {i}/{n_batches} failed: {resp_error}"
+                    )
+                resolved = resp.get("result", {}).get("resolved", [])
+                total_resolved += len(resolved)
+                print(
+                    f"  batch {i}/{n_batches}: {len(resolved)}/{len(chunk)} resolved",
+                    flush=True,
+                )
+            print(f"  {total_resolved}/{len(owned)} resolved", flush=True)
+            if total_resolved == 0:
+                owned_desc = f"owned by '{pdk_name}'" if pdk_name else "requested"
+                print(
+                    f"No factories resolved out of {len(owned)} {owned_desc} "
+                    "— refusing to proceed with an incomplete nyanlib cache",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                sys.exit(1)
 
             # Phase 4 — wait for the SVG nyanlib cycle to drain
             print("Phase 4: Waiting for SVG nyanlib cycle…", flush=True)
-            wait_ready(rpc, proc, timeout=args.timeout)
+            wait_ready(rpc, proc, log_path, timeout=args.timeout)
             print("Phase 4 complete.", flush=True)
 
         # Report outputs
