@@ -1,0 +1,15 @@
+name: Check model JAX jittability
+description: JIT registered PDK models with their numeric default parameters
+inputs:
+  enforce:
+    description: Emit error annotations instead of audit warnings
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Probe registered models
+      shell: bash
+      run: uv run python "$GITHUB_ACTION_PATH/../../scripts/check_model_jittability.py"
+      env:
+        PDK_MODEL_JIT_ENFORCE: ${{ inputs.enforce }}

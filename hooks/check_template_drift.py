@@ -23,10 +23,10 @@ TEMPLATES: list[str] = [
     ".github/dependabot.yml",
     ".github/workflows/claude-pr-review.yml",
     ".github/workflows/drc.yml",
+    ".github/workflows/gds-xor.yml",
     ".github/workflows/issue.yml",
     ".github/workflows/model_coverage.yml",
     ".github/workflows/model_regression.yml",
-    ".github/workflows/generate_nyanlib.yml",
     ".github/workflows/pages.yml",
     ".github/workflows/build-pdf.yml",
     ".github/workflows/test_code.yml",
@@ -64,6 +64,7 @@ FORBIDDEN_FILES: list[str] = [
 # List of (template_path, glob_pattern) pairs.
 CONDITIONAL_TEMPLATES: list[tuple[str, str]] = [
     (".github/workflows/sample-projects.yml", "*--sample-projects"),
+    (".github/workflows/generate_nyanlib.yml", "*--sample-projects"),
 ]
 
 
