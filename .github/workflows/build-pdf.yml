@@ -79,7 +79,7 @@ jobs:
         run: git submodule update --init --recursive
 
       - if: fromJSON(steps.config.outputs.json).use_just
-        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v3
 
       - name: Pre-build
         if: fromJSON(steps.config.outputs.json).pre_build_command != ''
