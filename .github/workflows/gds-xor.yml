@@ -80,7 +80,7 @@ jobs:
         run: |
           curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/scripts/gds_xor_report.py" \
             -o gds_xor_report.py
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         if: ${{ !steps.changed.outputs.skip_reason }}
         with:
           python-version: "3.12"

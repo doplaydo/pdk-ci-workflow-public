@@ -29,6 +29,12 @@ on:
     secrets:
       GFP_API_KEY:
         required: false
+      GFP_GHCR_APP_ID:
+        description: 'GitHub App ID for cross-org GHCR pull access'
+        required: false
+      GFP_GHCR_APP_PRIVATE_KEY:
+        description: 'GitHub App private key for cross-org GHCR pull access'
+        required: false
 
 env:
   GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
@@ -85,30 +91,19 @@ jobs:
     # externally-sourced Python is guaranteed ABI/layout-compatible with
     # gfp's bundled libpython. Running inside the image sidesteps the whole
     # class of mismatch - there's only one Python here.
-    container:
-      image: ${{ inputs.gfp_image }}
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - name: Install git, gh CLI, and build tools
-        # python:3.12-slim ships none of these. git/gh are needed for the
-        # checkout, script download, and the PR-landing step below.
-        # build-essential is needed because some PDK dependencies have no
-        # wheel matching this exact Python build and fall back to a source
-        # build (`No such file or directory: 'gcc'` without it).
+      - name: Generate GitHub App token for GHCR
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.GFP_GHCR_APP_ID }}
+          private-key: ${{ secrets.GFP_GHCR_APP_PRIVATE_KEY }}
+          owner: doplaydo
+      
+      - name: Pull gfp-server image
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            git curl ca-certificates gnupg build-essential
-          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-            -o /usr/share/keyrings/githubcli-archive-keyring.gpg
-          chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-            > /etc/apt/sources.list.d/github-cli.list
-          apt-get update
-          apt-get install -y gh
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "${{ steps.app-token.outputs.token }}" | docker login ghcr.io -u x-access-token --password-stdin
+          docker pull "${{ inputs.gfp_image }}"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -131,16 +126,6 @@ jobs:
           print(f"package={pyproject['project']['name']}")
           PY
 
-      - name: Configure GFP portal index
-        run: uv run --no-project --with gdsfactoryplus gfp configure --api-key "$GFP_API_KEY" --uv
-
-      - name: Install PDK
-        working-directory: ${{ matrix.project-dir }}
-        env:
-          PDK_PACKAGE: ${{ steps.pdk-package.outputs.package }}
-        # Sample-project tests may use tool.uv.sources to point at the checked-out
-        # repo. Nyanlib generation intentionally consumes the published PDK.
-        run: uv sync --no-sources-package "$PDK_PACKAGE"
 
       - name: Download generate_nyanlib script
         env:
@@ -149,12 +134,27 @@ jobs:
           curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/$SCRIPT_REF/scripts/generate_nyanlib.py" \
             -o generate_nyanlib.py
 
-      - name: Generate nyanlib
+      - name: Configure, install, and generate nyanlib
+        env:
+          PDK_PACKAGE: ${{ steps.pdk-package.outputs.package }}
         run: |
-          python3 generate_nyanlib.py \
-            --gfp-bin "$(command -v gfp)" \
-            --project-root "$PROJECT_DIR" \
-            --timeout ${{ inputs.timeout }}
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            -w "$GITHUB_WORKSPACE" \
+            -e GFP_API_KEY -e GFP_SYMBOL_WORKERS \
+            -e PROJECT_DIR -e UV_INDEX_STRATEGY \
+            -e PDK_PACKAGE \
+            "${{ inputs.gfp_image }}" bash -c '
+              set -euo pipefail
+              uv run --no-project --with gdsfactoryplus gfp configure --api-key "$GFP_API_KEY" --uv
+              cd "$PROJECT_DIR"
+              uv sync --no-sources-package "$PDK_PACKAGE"
+              cd "$GITHUB_WORKSPACE"
+              python3 generate_nyanlib.py \
+                --gfp-bin "$(command -v gfp)" \
+                --project-root "$PROJECT_DIR" \
+                --timeout ${{ inputs.timeout }}
+            '
 
       - name: Upload server log on failure
         if: failure()
