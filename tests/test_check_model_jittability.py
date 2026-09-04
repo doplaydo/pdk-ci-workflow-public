@@ -265,9 +265,8 @@ def test_model_regression_workflow_runs_probe_in_audit_mode() -> None:
         item for item in steps if item.get("name") == "Check model JAX jittability"
     )
 
-    assert step["uses"] == (
-        "doplaydo/pdk-ci-workflow/actions/check_model_jittability@main"
-    )
+    expected_action = "doplaydo/pdk-ci-workflow-public/actions/check_model_jittability@main"
+    assert step["uses"] == expected_action
     assert enforcement_input["default"] is False
     assert step["with"]["enforce"] == "${{ inputs.enforce-model-jittability }}"
     assert step["continue-on-error"] == ("${{ ! inputs.enforce-model-jittability }}")
