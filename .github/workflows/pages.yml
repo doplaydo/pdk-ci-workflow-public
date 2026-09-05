@@ -34,6 +34,8 @@ jobs:
       - name: Install dependencies
         run: |
           make dev
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: make docs
         run: |
           make docs
