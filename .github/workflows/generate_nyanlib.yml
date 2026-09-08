@@ -151,6 +151,7 @@ jobs:
             "${{ secrets.GFP_ECR_IMAGE }}" \
             bash -c '
               set -euo pipefail
+              apt-get update && apt-get install -y --no-install-recommends libexpat1 build-essential
               uv run --no-project --with gdsfactoryplus gfp configure --api-key "$GFP_API_KEY" --uv
               cd "$PROJECT_DIR"
               uv sync --no-sources-package "$PDK_PACKAGE"
