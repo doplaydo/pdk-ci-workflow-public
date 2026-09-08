@@ -29,12 +29,12 @@ on:
     secrets:
       GFP_API_KEY:
         required: false
-      GFP_GHCR_APP_ID:
-        description: 'GitHub App ID for cross-org GHCR pull access'
-        required: false
-      GFP_GHCR_APP_PRIVATE_KEY:
-        description: 'GitHub App private key for cross-org GHCR pull access'
-        required: false
+      GFP_ECR_IMAGE:
+        description: 'Full ECR image URI for gfp-server'
+        required: true
+      SHARED_SERVICES_AWS_OIDC_ROLE_ARN:
+        description: 'IAM role ARN for OIDC-based ECR pull (gdsfactory-pull)'
+        required: true
 
 env:
   GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
@@ -43,8 +43,8 @@ env:
 
 permissions:
   contents: write
-  packages: read
   pull-requests: write
+  id-token: write
 
 jobs:
   discover:
@@ -92,22 +92,22 @@ jobs:
     # gfp's bundled libpython. Running inside the image sidesteps the whole
     # class of mismatch - there's only one Python here.
     steps:
-      - name: Generate GitHub App token for GHCR
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ secrets.GFP_GHCR_APP_ID }}
-          private-key: ${{ secrets.GFP_GHCR_APP_PRIVATE_KEY }}
-          owner: doplaydo
-      
-      - name: Pull gfp-server image
-        run: |
-          echo "${{ steps.app-token.outputs.token }}" | docker login ghcr.io -u x-access-token --password-stdin
-          docker pull "${{ inputs.gfp_image }}"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.head_ref || github.ref }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ secrets.SHARED_SERVICES_AWS_OIDC_ROLE_ARN }}
+          aws-region: us-west-2
+      
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@aded0d722166a37980e030aa969dda0bfe6b6947 # v2.1.7
+      
+      - name: Pull gfp-server image
+        run: docker pull "${{ secrets.GFP_ECR_IMAGE }}"
 
       - id: slug
         name: Compute project-dir slug
@@ -134,27 +134,34 @@ jobs:
           curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/$SCRIPT_REF/scripts/generate_nyanlib.py" \
             -o generate_nyanlib.py
 
-      - name: Configure, install, and generate nyanlib
+      - name: Install PDK and generate nyanlib inside gfp-server
         env:
           PDK_PACKAGE: ${{ steps.pdk-package.outputs.package }}
+          TIMEOUT: '${{ inputs.timeout }}'
         run: |
           docker run --rm \
-            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
-            -w "$GITHUB_WORKSPACE" \
-            -e GFP_API_KEY -e GFP_SYMBOL_WORKERS \
-            -e PROJECT_DIR -e UV_INDEX_STRATEGY \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            -e GFP_API_KEY \
+            -e GFP_SYMBOL_WORKERS \
+            -e UV_INDEX_STRATEGY \
+            -e PROJECT_DIR \
             -e PDK_PACKAGE \
-            "${{ inputs.gfp_image }}" bash -c '
+            -e TIMEOUT \
+            "${{ secrets.GFP_ECR_IMAGE }}" \
+            bash -c '
               set -euo pipefail
               uv run --no-project --with gdsfactoryplus gfp configure --api-key "$GFP_API_KEY" --uv
               cd "$PROJECT_DIR"
               uv sync --no-sources-package "$PDK_PACKAGE"
-              cd "$GITHUB_WORKSPACE"
+              cd /workspace
               python3 generate_nyanlib.py \
                 --gfp-bin "$(command -v gfp)" \
                 --project-root "$PROJECT_DIR" \
-                --timeout ${{ inputs.timeout }}
+                --timeout "$TIMEOUT"
             '
+          # Fix file ownership so subsequent runner steps can read build output
+          sudo chown -R "$(id -u):$(id -g)" "$PROJECT_DIR/build" 2>/dev/null || true
 
       - name: Upload server log on failure
         if: failure()
