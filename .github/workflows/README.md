@@ -20,7 +20,7 @@ PDK repos create thin wrapper workflows that call these and forward secrets expl
 | `model_coverage.yml` | model-coverage | `GFP_API_KEY` | PDK model-to-cell coverage check |
 | `model_regression.yml` | model-regression | `GFP_API_KEY` | Model-specific regression tests |
 | `update_badges.yml` | badges | `GFP_API_KEY`, `GITHUB_TOKEN` | Generate coverage, model, issue, and PR badges |
-| `generate_nyanlib.yml` | discover, generate | `GFP_API_KEY`, `GFP_GHCR_APP_ID`, `GFP_GHCR_APP_PRIVATE_KEY`, `GITHUB_TOKEN` | Installs sample projects from configured package indexes while ignoring local source overrides for the root PDK package, runs `gfp serve` inside the `gfp-server` container (cross-org pull via GitHub App token), and produces `build/models.nyanlib` + SVG symbols; opens an update PR only on a manual `workflow_dispatch` from `main` |
+| `generate_nyanlib.yml` | discover, generate | `GFP_API_KEY`, `GFP_ECR_IMAGE`, `SHARED_SERVICES_AWS_OIDC_ROLE_ARN`, `GITHUB_TOKEN` | Installs sample projects from configured package indexes while ignoring local source overrides for the root PDK package, pulls `gfp-server` from ECR via OIDC and runs `gfp serve` inside it, producing `build/models.nyanlib` + SVG symbols; opens an update PR only on a manual `workflow_dispatch` from `main` |
 | `build-pdf.yml` | build-pdf | `GFP_API_KEY`, `SIMCLOUD_APIKEY`, `PDK_CI_WORKFLOW_TOKEN` | Build PDF docs on demand; uploads artifact and optionally attaches to a release |
 
 ## Example Usage

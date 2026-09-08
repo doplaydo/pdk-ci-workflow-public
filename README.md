@@ -135,8 +135,8 @@ PDK repos must have these secrets configured and forwarded explicitly in their w
 | Secret | Used by |
 |--------|---------|
 | `GFP_API_KEY` | test_code, test-sample-projects, pages, drc, test_coverage, model_coverage, model_regression, update_badges, generate_nyanlib |
-| `GFP_GHCR_APP_ID` | generate_nyanlib — GitHub App ID for cross-org GHCR pull of the `gfp-server` container image |
-| `GFP_GHCR_APP_PRIVATE_KEY` | generate_nyanlib — GitHub App private key for cross-org GHCR pull |
+| `GFP_ECR_IMAGE` | generate_nyanlib — full ECR image URI for `gfp-server` |
+| `SHARED_SERVICES_AWS_OIDC_ROLE_ARN` | generate_nyanlib — IAM role ARN for OIDC-based ECR pull (`gdsfactory-pull` role) |
 | `ANTHROPIC_API_KEY` | claude-pr-review |
 | `SIMCLOUD_APIKEY` | pages |
 | `GITHUB_TOKEN` | issue, update_badges, generate_nyanlib (automatic) |
@@ -248,8 +248,8 @@ PDK repositories consuming these workflows need:
 
 For PDK repositories (passed explicitly in each wrapper workflow):
 - `GFP_API_KEY` - GDSFactory Platform validation and package-index configuration (test_code, pages, drc, test_coverage, model_coverage, model_regression, update_badges, generate_nyanlib)
-- `GFP_GHCR_APP_ID` - GitHub App ID for cross-org GHCR pull of the `gfp-server` container (generate_nyanlib)
-- `GFP_GHCR_APP_PRIVATE_KEY` - GitHub App private key for cross-org GHCR pull (generate_nyanlib)
+- `GFP_ECR_IMAGE` - Full ECR image URI for `gfp-server` (generate_nyanlib)
+- `SHARED_SERVICES_AWS_OIDC_ROLE_ARN` - IAM role ARN for OIDC-based ECR pull, `gdsfactory-pull` role (generate_nyanlib)
 - `ANTHROPIC_API_KEY` - Claude code reviews (claude-pr-review)
 - `SIMCLOUD_APIKEY` - Simulation cloud access (pages)
 
