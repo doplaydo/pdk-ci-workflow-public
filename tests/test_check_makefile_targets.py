@@ -7,6 +7,8 @@ from pathlib import Path
 
 from hooks.check_makefile_targets import main
 
+CANONICAL_FETCH = 'gh api "repos/doplaydo/pdk-ci-workflow-public/contents/templates/.pre-commit-config.yaml?ref=main" --header "Accept: application/vnd.github.raw+json" > .pre-commit-config.yaml'
+
 
 class TestCheckMakefileTargets:
     def test_valid_makefile_passes(self, pdk_root: Path) -> None:
@@ -82,7 +84,7 @@ class TestCheckMakefileTargets:
 
     def test_dev_curl_autofix_rewrites_and_fails(self, pdk_root: Path) -> None:
         """dev target fetching the canonical config gets normalized and exits 1."""
-        stale_curl = "curl -sf https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow/main/templates/.pre-commit-config.yaml -o .pre-commit-config.yaml"
+        stale_curl = "curl -s https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/templates/.pre-commit-config.yaml -o .pre-commit-config.yaml"
         makefile = pdk_root / "Makefile"
         makefile.write_text(
             textwrap.dedent(f"""\
@@ -99,13 +101,13 @@ class TestCheckMakefileTargets:
         )
         assert main() == 1
         rewritten = makefile.read_text()
-        assert "curl" in rewritten.split("dev:")[1].split("\n")[1]
+        assert "curl -sf" in rewritten.split("dev:")[1].split("\n")[1]
         assert "pdk-ci-workflow-public" in rewritten
 
     def test_dev_gh_api_passes(self, pdk_root: Path) -> None:
         """dev target using gh api passes without error."""
         (pdk_root / "Makefile").write_text(
-            textwrap.dedent("""\
+            textwrap.dedent(f"""\
                 install:
                 \tuv sync
 
@@ -113,7 +115,7 @@ class TestCheckMakefileTargets:
                 \tuv run pytest
 
                 dev: install
-                \tgh api "repos/doplaydo/pdk-ci-workflow/contents/templates/.pre-commit-config.yaml?ref=main" --header "Accept: application/vnd.github.raw+json" > .pre-commit-config.yaml
+                \t{CANONICAL_FETCH}
                 \tuv run pre-commit clean
                 \tuv run pre-commit install
             """)
@@ -126,7 +128,7 @@ class TestCheckMakefileTargets:
         """dev target missing `pre-commit clean` gets it inserted before install, exits 1."""
         makefile = pdk_root / "Makefile"
         makefile.write_text(
-            textwrap.dedent("""\
+            textwrap.dedent(f"""\
                 install:
                 \tuv sync
 
@@ -134,7 +136,7 @@ class TestCheckMakefileTargets:
                 \tuv run pytest
 
                 dev: install
-                \tgh api "repos/doplaydo/pdk-ci-workflow/contents/templates/.pre-commit-config.yaml?ref=main" --header "Accept: application/vnd.github.raw+json" > .pre-commit-config.yaml
+                \t{CANONICAL_FETCH}
                 \tuv run pre-commit install
             """)
         )
@@ -146,7 +148,7 @@ class TestCheckMakefileTargets:
     def test_dev_with_precommit_clean_passes(self, pdk_root: Path) -> None:
         """dev target already running `pre-commit clean` before install passes without rewrite."""
         makefile = pdk_root / "Makefile"
-        content = textwrap.dedent("""\
+        content = textwrap.dedent(f"""\
             install:
             \tuv sync
 
@@ -154,7 +156,7 @@ class TestCheckMakefileTargets:
             \tuv run pytest
 
             dev: install
-            \tgh api "repos/doplaydo/pdk-ci-workflow/contents/templates/.pre-commit-config.yaml?ref=main" --header "Accept: application/vnd.github.raw+json" > .pre-commit-config.yaml
+            \t{CANONICAL_FETCH}
             \tuv run pre-commit clean
             \tuv run pre-commit install
         """)
