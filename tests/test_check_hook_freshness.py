@@ -9,6 +9,8 @@ import pytest
 from hooks import check_hook_freshness
 from hooks.check_hook_freshness import main
 
+HOOK_REPO_URL = "https://github.com/doplaydo/pdk-ci-workflow-public"
+
 
 def _fake_git(installed: str | None, remote: str | None):
     def fake(*args: str, **kwargs) -> str | None:
@@ -80,7 +82,7 @@ class TestCheckHookFreshness:
         content += (
             "- hooks:\n"
             "  - id: check-hook-freshness\n"
-            "  repo: https://github.com/doplaydo/pdk-ci-workflow\n"
+            f"  repo: {HOOK_REPO_URL}\n"
             "  rev: v1.2.3\n"
         )
         config.write_text(content)
@@ -100,7 +102,7 @@ class TestCheckHookFreshness:
         content += (
             "- hooks:\n"
             "  - id: check-hook-freshness\n"
-            "  repo: https://github.com/doplaydo/pdk-ci-workflow\n"
+            f"  repo: {HOOK_REPO_URL}\n"
             "  rev: main\n"
         )
         config.write_text(content)
