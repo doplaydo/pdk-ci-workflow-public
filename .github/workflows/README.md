@@ -4,6 +4,8 @@ Reusable workflows are complete, self-contained workflow definitions triggered v
 
 PDK repos create thin wrapper workflows that call these and forward secrets explicitly. See `templates/.github/workflows/` for ready-to-copy wrappers.
 
+The docs workflow accepts an optional `runner` input, defaulting to `ubuntu-latest`. Its wrapper reads the `DOCS_RUNNER` repository variable; set it to an available runner label (for example, `ubuntu-8core`) to select a larger docs build machine.
+
 
 ## Workflows
 

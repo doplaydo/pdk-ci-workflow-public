@@ -141,6 +141,13 @@ PDK repos must have these secrets configured and forwarded explicitly in their w
 | `SIMCLOUD_APIKEY` | pages |
 | `GITHUB_TOKEN` | issue, update_badges, generate_nyanlib (automatic) |
 
+### Repository Variables
+
+Read from `vars.` in the wrapper, set per PDK repo. Not secrets, and not forwarded through the `secrets:` block:
+
+| Variable | Used by | Description |
+|----------|---------|-------------|
+| `DOCS_RUNNER` | pages | Runner label for the docs build (for example, `ubuntu-8core`). Unset or empty uses `ubuntu-latest`. |
 
 ## Pre-commit Hooks
 
