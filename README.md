@@ -112,8 +112,8 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 
 | Workflow | Jobs | Description |
 |----------|------|-------------|
-| `test_code.yml` | pre-commit, test_code, test_gfp | Pre-commit (canonical config), pytest, GFP validation |
-| `test-sample-projects.yml` | discover, test, notebooks, drc | Unit tests, notebook execution, and DRC for all `*--sample-projects/` directories |
+| `test_code.yml` | wheel-contents, pre-commit, test_code, test_gfp, test_gfp_no_dev | Wheel reference-file exclusion, pre-commit (canonical config), pytest, GFP validation |
+| `test-sample-projects.yml` | discover, test, notebooks | Unit tests and notebook execution for all `*--sample-projects/` directories |
 | `pages.yml` | build-docs | Sphinx docs build and Pages artifact upload. The caller's wrapper supplies the `deploy-docs` job that publishes to GitHub Pages |
 | `claude-pr-review.yml` | review | AI code review via Claude Sonnet 4. Runs once on PR open/reopen; re-run on demand by commenting `/claude-api review` |
 | `drc.yml` | drc | Design Rule Check with GFP and badge generation |
@@ -124,8 +124,40 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 | `model_regression.yml` | model-regression | Model-specific regression tests |
 | `generate_nyanlib.yml` | discover, generate | Installs each `*--sample-projects/` directory from configured package indexes while ignoring local source overrides for the root PDK package, runs `gfp serve` inside the `gfp-server` container, and produces `<dir>/build/models.nyanlib` + SVG symbols per directory; opens an update PR per directory only on a manual `workflow_dispatch` from `main` |
 | `update_badges.yml` | badges | Generate coverage, model, issue, and PR badges |
+| `sample-project-upload.yml` | discover, test, nyanlib, upload | Tests each `*--sample-projects/` directory against the published PDK, generates its nyanlib, and uploads a zip of it to the GDSFactory+ portal |
 
 PDK repos call these workflows from thin wrapper files in `.github/workflows/`, passing secrets explicitly. See `templates/.github/workflows/` for ready-to-copy wrappers.
+
+### Wheel reference-file exclusion
+
+Routine `test_code.yml` CI builds a wheel in a separate `wheel-contents` job
+and checks its contents. `release.yml` applies the same check to every
+cibuildwheel platform wheel before uploading artifacts or publishing them.
+Both checks fail on reference directories (including nested directories such
+as `<package>/data/references/`) and `.git` metadata. Empty wheel directories
+and unreadable wheels also fail. Hatch `force-include`, `sources`,
+`shared-data`, `shared-scripts`, and `extra-metadata` mappings cannot copy or
+rename reference directories into wheels, even under a different destination
+name. The list form of `sources` is checked too.
+
+Keep vendor reference fixtures outside the distributed package and exclude
+them from builds. When files are needed at runtime, move the required files
+into the PDK package or one of its runtime subdirectories, such as
+`<package>/gds/` or `<package>/models/data/`, and update the readers. Keep
+comparison-only fixtures and vendor documentation in the reference directory.
+Runtime GDS, model spreadsheets, and other assets in ordinary package
+directories are allowed; file extensions alone do not determine whether a
+file is a reference fixture. The check has no per-PDK opt-out.
+
+Run the same check locally after building:
+
+```sh
+python scripts/check_wheel_contents.py --pyproject pyproject.toml wheelhouse
+```
+
+The script accepts wheel files or directories. See
+[`actions/check_wheel_contents/action.yml`](actions/check_wheel_contents/action.yml)
+for the shared action and [`scripts/README.md`](scripts/README.md) for its CLI.
 
 
 ### Required Secrets
@@ -134,13 +166,20 @@ PDK repos must have these secrets configured and forwarded explicitly in their w
 
 | Secret | Used by |
 |--------|---------|
-| `GFP_API_KEY` | test_code, test-sample-projects, pages, drc, test_coverage, model_coverage, model_regression, update_badges, generate_nyanlib |
-| `GFP_ECR_IMAGE` | generate_nyanlib — full ECR image URI for `gfp-server` |
-| `SHARED_SERVICES_AWS_OIDC_ROLE_ARN` | generate_nyanlib — IAM role ARN for OIDC-based ECR pull (`gdsfactory-pull` role) |
+| `GFP_API_KEY` | test_code, test-sample-projects, pages, drc, test_coverage, model_coverage, model_regression, update_badges, generate_nyanlib, sample-project-upload |
+| `GFP_ECR_IMAGE` | generate_nyanlib, sample-project-upload — full ECR image URI for `gfp-server` |
+| `SHARED_SERVICES_AWS_OIDC_ROLE_ARN` | generate_nyanlib, sample-project-upload — IAM role ARN for OIDC-based ECR pull (`gdsfactory-pull` role) |
 | `ANTHROPIC_API_KEY` | claude-pr-review |
 | `SIMCLOUD_APIKEY` | pages |
 | `GITHUB_TOKEN` | issue, update_badges, generate_nyanlib (automatic) |
 
+### Repository Variables
+
+Read from `vars.` in the wrapper, set per PDK repo. Not secrets, and not forwarded through the `secrets:` block:
+
+| Variable | Used by | Description |
+|----------|---------|-------------|
+| `DOCS_RUNNER` | pages | Runner label for the docs build (for example, `ubuntu-8core`). Unset or empty uses `ubuntu-latest`. |
 
 ## Pre-commit Hooks
 
@@ -182,7 +221,7 @@ See [`hooks/README.md`](hooks/README.md) for detailed documentation.
 | `check-makefile-targets` | Required targets (install, test) and recommended targets (docs, build, test-force, update-pre, dev). Auto-fix: rewrites `dev` target's stale pre-commit-config fetch to `curl` against the public repo (exit 1; re-run exits 0) |
 | `check-workflows` | `.github/workflows/` has test_code.yml with pre-commit and test jobs |
 | `check-precommit-config` | `.pre-commit-config.yaml` includes required hooks (trailing-whitespace, end-of-file-fixer, ruff or ruff-lint, ruff-format, pydocstyle) |
-| `check-template-drift` | `.github/dependabot.yml` and `.github/workflows/*.yml` thin callers match upstream templates. Auto-fixes by rewriting or creating files. Conditionally deploys `sample-projects.yml` and `generate_nyanlib.yml` in repos containing `*--sample-projects/` directories. Deletes deprecated templates (listed in `DEPRECATED_TEMPLATES`) if still present. |
+| `check-template-drift` | `.github/dependabot.yml` and `.github/workflows/*.yml` thin callers match upstream templates. Auto-fixes by rewriting or creating files. Conditionally deploys `sample-projects.yml`, `generate_nyanlib.yml`, and `sample-project-upload.yml` in repos containing `*--sample-projects/` directories. Deletes deprecated templates (listed in `DEPRECATED_TEMPLATES`) if still present. |
 
 #### Multi-band
 
