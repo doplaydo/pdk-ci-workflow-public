@@ -2,6 +2,11 @@ name: build docs
 on:
   workflow_call:
     inputs:
+      runner:
+        description: 'GitHub Actions runner to use for the docs build'
+        required: false
+        type: string
+        default: ubuntu-latest
       retention-days:
         description: 'Number of days to retain the pages artifact'
         required: false
@@ -18,7 +23,7 @@ concurrency:
 jobs:
   build-docs:
     if: github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     name: Sphinx docs to gh-pages
     env:
       GFP_API_KEY: ${{ secrets.GFP_API_KEY }}

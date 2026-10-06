@@ -65,6 +65,7 @@ FORBIDDEN_FILES: list[str] = [
 CONDITIONAL_TEMPLATES: list[tuple[str, str]] = [
     (".github/workflows/sample-projects.yml", "*--sample-projects"),
     (".github/workflows/generate_nyanlib.yml", "*--sample-projects"),
+    (".github/workflows/sample-project-upload.yml", "*--sample-projects"),
 ]
 
 
