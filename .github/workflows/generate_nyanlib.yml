@@ -26,6 +26,25 @@ on:
         required: false
         type: string
         default: 'main'
+      open_pr:
+        description: >-
+          Open the "regenerate nyanlib" PR on a manual dispatch from main.
+          Callers that only want the build artifacts pass false: a reusable
+          workflow sees its caller's github.event_name/github.ref
+          (github.com/actions/toolkit#1264), so a manual dispatch of the
+          caller would otherwise open this PR as a side effect.
+        required: false
+        type: boolean
+        default: true
+      soft_fail:
+        description: >-
+          Don't fail this workflow when a project's generation fails. Callers
+          that can carry on without nyanlib output check for the per-project
+          nyanlib-ok-<slug> artifact instead, since the build artifacts are
+          uploaded even on failure.
+        required: false
+        type: boolean
+        default: false
     secrets:
       GFP_API_KEY:
         required: false
@@ -67,6 +86,7 @@ jobs:
     needs: discover
     if: needs.discover.outputs.project-dirs != '' && needs.discover.outputs.project-dirs != '[]'
     runs-on: ubuntu-latest
+    continue-on-error: ${{ inputs.soft_fail }}
     strategy:
       fail-fast: false
       matrix:
@@ -182,13 +202,25 @@ jobs:
             ${{ matrix.project-dir }}/build/symbols/
           retention-days: 7
 
+      # Only reached when every step above succeeded: the build artifacts are
+      # uploaded even on failure, so their presence proves nothing.
+      - name: Mark generation succeeded
+        run: echo ok > "nyanlib-ok-${{ steps.slug.outputs.slug }}.txt"
+
+      - name: Upload success marker
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nyanlib-ok-${{ steps.slug.outputs.slug }}
+          path: nyanlib-ok-${{ steps.slug.outputs.slug }}.txt
+          retention-days: 7
+
       - name: Open nyanlib update PR (manual dispatch only)
         # main is rule-protected org-wide: no direct push can land here, ever
         # (pull_request rule, required_approving_review_count: 1, no bypass
         # actor). Only run this on an explicit manual dispatch, not on every
         # push to main - a "regenerate nyanlib" PR needing human approval
         # after every commit would be spam, not a warm-start cache refresh.
-        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        if: inputs.open_pr && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

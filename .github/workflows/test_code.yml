@@ -14,6 +14,20 @@ env:
   GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
 
 jobs:
+  wheel-contents:
+    name: Check wheel contents
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: '3.12'
+      - name: Build wheel
+        run: uv build --wheel --out-dir wheelhouse
+      - name: Check wheel contents
+        uses: doplaydo/pdk-ci-workflow-public/actions/check_wheel_contents@main
   pre-commit:
     runs-on: ubuntu-latest
     steps:

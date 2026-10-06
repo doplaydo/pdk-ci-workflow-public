@@ -171,4 +171,3 @@ jobs:
             uv run --no-sync jupyter nbconvert --to notebook --execute "$notebook" \
               --output-dir /tmp --ExecutePreprocessor.timeout=600
           done
-
