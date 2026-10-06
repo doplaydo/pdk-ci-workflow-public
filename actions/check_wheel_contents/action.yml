@@ -1,0 +1,21 @@
+name: Check wheel contents
+description: Reject reference fixtures and Git metadata before distributing PDK wheels
+inputs:
+  wheel-directory:
+    description: Directory containing the built wheels
+    required: false
+    default: wheelhouse
+runs:
+  using: composite
+  steps:
+    - name: Set up Python for wheel inspection
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: '3.12'
+    - name: Validate wheel contents and reference build mappings
+      shell: bash
+      env:
+        WHEEL_DIRECTORY: ${{ inputs.wheel-directory }}
+      run: >-
+        python "$GITHUB_ACTION_PATH/../../scripts/check_wheel_contents.py"
+        --pyproject pyproject.toml "$WHEEL_DIRECTORY"

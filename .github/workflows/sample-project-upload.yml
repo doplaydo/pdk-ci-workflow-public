@@ -1,0 +1,489 @@
+name: Sample Project Upload
+
+on:
+  workflow_call:
+    inputs:
+      release_version:
+        description: >-
+          Version to upload every sample project at. Set by release.yml to
+          the version it just published. Empty means each sample project's
+          own pin on its PDK package.
+        required: false
+        type: string
+        default: ''
+      soft_fail:
+        description: >-
+          Report test/upload failures with ::error:: but keep this workflow's
+          jobs green. release.yml passes true; manual and merge-triggered
+          runs leave it false so failures are loud.
+        required: false
+        type: boolean
+        default: false
+      script_ref:
+        description: >-
+          Ref to fetch scripts from (see generate_nyanlib.yml's input of the
+          same name) - override only when testing this workflow from a branch.
+        required: false
+        type: string
+        default: 'main'
+    secrets:
+      GFP_API_KEY:
+        required: false
+      GFP_ECR_IMAGE:
+        description: 'Full ECR image URI for gfp-server (forwarded to generate_nyanlib.yml)'
+        required: true
+      SHARED_SERVICES_AWS_OIDC_ROLE_ARN:
+        description: 'IAM role ARN for OIDC-based ECR pull (forwarded to generate_nyanlib.yml)'
+        required: true
+
+env:
+  GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
+  # The private GFP portal index shadows PyPI package names. uv's default
+  # "first-index" strategy would refuse to fall back to PyPI. Consider all
+  # indexes so the correct versions are found wherever they live.
+  UV_INDEX_STRATEGY: unsafe-best-match
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      project-dirs: ${{ steps.find.outputs.dirs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: find
+        run: |
+          dirs=$(find . -maxdepth 3 -name 'pyproject.toml' \
+            -path '*--sample-projects/*' ! -path '*/.venv/*' \
+            | sed 's|^\./||; s|/pyproject.toml||' \
+            | sort \
+            | jq -Rcs '[split("\n")[] | select(. != "")]')
+          echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
+
+  # Every check that can fail is continue-on-error so that the final step
+  # alone decides the job's colour from inputs.soft_fail. A project only
+  # reaches upload if its pristine snapshot artifact exists, and that is
+  # only uploaded when every check here passed.
+  test:
+    name: Test ${{ matrix.project-dir }}
+    needs: discover
+    if: needs.discover.outputs.project-dirs != '' && needs.discover.outputs.project-dirs != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project-dir: ${{ fromJSON(needs.discover.outputs.project-dirs) }}
+    env:
+      PROJECT_DIR: ${{ matrix.project-dir }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ matrix.project-dir }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: slug
+        name: Compute project-dir slug
+        working-directory: .
+        run: |
+          slug=$(echo "$PROJECT_DIR" | tr '/' '-' | sed 's/^-*//; s/-*$//')
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+
+      # Taken before anything below writes .venv/ or build/ into the working
+      # copy, so the uploaded zip holds exactly the committed project.
+      - name: Snapshot sample project
+        working-directory: .
+        run: |
+          mkdir -p "$RUNNER_TEMP/handoff"
+          git archive --format=tar -o "$RUNNER_TEMP/handoff/sample-project.tar" "HEAD:$PROJECT_DIR"
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
+
+      - id: pdk-package
+        name: Read PDK package name
+        working-directory: .
+        run: |
+          python3 <<'PY' >> "$GITHUB_OUTPUT"
+          import pathlib
+          import tomllib
+
+          pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          print(f"package={pyproject['project']['name']}")
+          PY
+
+      - id: configure
+        name: Configure gfp
+        continue-on-error: true
+        run: |
+          # Retry to ride out transient network timeouts talking to the GFP API.
+          for attempt in 1 2 3; do
+            if uv run --no-project --with gdsfactoryplus gfp configure --api-key "$GFP_API_KEY" --uv; then
+              exit 0
+            fi
+            echo "gfp configure failed (attempt ${attempt}/3); retrying after $((10 * attempt))s..."
+            sleep $((10 * attempt))
+          done
+          echo "::error::gfp configure failed after 3 attempts"
+          exit 1
+
+      - id: scripts
+        name: Download build_cell and sample_project_upload scripts
+        continue-on-error: true
+        env:
+          SCRIPT_REF: ${{ inputs.script_ref }}
+        run: |
+          for script in build_cell.py sample_project_upload.py; do
+            curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/$SCRIPT_REF/scripts/$script" \
+              -o "$RUNNER_TEMP/$script"
+          done
+
+      - id: install
+        name: Install sample project against the published PDK
+        if: steps.configure.outcome == 'success'
+        continue-on-error: true
+        env:
+          PDK_PACKAGE: ${{ steps.pdk-package.outputs.package }}
+        # Same as generate_nyanlib.yml: ignore any tool.uv.sources override
+        # pointing at the checked-out repo, so what is tested is what users
+        # install.
+        run: uv sync --no-sources-package "$PDK_PACKAGE" --all-extras --all-groups
+
+      # Upload refuses unless this equals the version being uploaded, so a
+      # stale pin can't get its content labelled with a newer release.
+      - id: installed-version
+        name: Record installed PDK version
+        if: steps.install.outcome == 'success' && steps.scripts.outcome == 'success'
+        continue-on-error: true
+        run: |
+          dist=$(cd "$GITHUB_WORKSPACE" && python3 "$RUNNER_TEMP/sample_project_upload.py" distribution "$PROJECT_DIR")
+          uv run --no-sync python -c 'import importlib.metadata, sys; print(importlib.metadata.version(sys.argv[1]))' "$dist" \
+            > "$RUNNER_TEMP/handoff/installed-version.txt"
+          echo "Installed $dist $(cat "$RUNNER_TEMP/handoff/installed-version.txt")"
+
+      - id: gfp-test
+        name: Test
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        run: uv run --no-sync gfp test
+
+      - id: notebooks
+        name: Execute notebooks
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        env:
+          RAY_ENABLE_UV_RUN_RUNTIME_ENV: "0"
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq libglu1-mesa libgl1
+          uv pip install nbconvert ipykernel
+          shopt -s globstar nullglob
+          SKIP_PATTERNS="hfss_|hfss-|matlab_|matlab-"
+          notebooks=(**/*.ipynb)
+          if [ ${#notebooks[@]} -eq 0 ]; then
+            echo "No notebooks found"
+            exit 0
+          fi
+          echo "Found ${#notebooks[@]} notebook(s)"
+          for notebook in "${notebooks[@]}"; do
+            if echo "$notebook" | grep -qE "$SKIP_PATTERNS"; then
+              echo "Skipping $notebook (proprietary tools)"
+              continue
+            fi
+            echo "Executing $notebook"
+            uv run --no-sync jupyter nbconvert --to notebook --execute "$notebook" \
+              --output-dir /tmp --ExecutePreprocessor.timeout=600
+          done
+
+      # DRC checks that DRC runs and reports on the sample_drc_errors fixture
+      # cell (expected to have errors), not that the project is DRC-clean,
+      # and only runs for projects that ship the fixture.
+      - id: drc-fixture
+        name: Look for sample_drc_errors fixture
+        run: |
+          if find . -name sample_drc_errors.py -not -path './.venv/*' | grep -q .; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$PROJECT_DIR has no sample_drc_errors.py fixture - skipping DRC"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: build-cell
+        name: Build sample_drc_errors cell
+        if: steps.drc-fixture.outputs.present == 'true' && steps.install.outcome == 'success' && steps.scripts.outcome == 'success'
+        continue-on-error: true
+        run: uv run --no-sync python "$RUNNER_TEMP/build_cell.py" sample_drc_errors
+
+      - id: drc
+        name: Run DRC
+        if: steps.build-cell.outcome == 'success'
+        continue-on-error: true
+        run: |
+          mkdir -p build/lyrdb
+          max_attempts=3
+          attempt=1
+          drc_exit=1
+          while [ "$attempt" -le "$max_attempts" ]; do
+            echo "--- Running DRC (attempt ${attempt}/${max_attempts}) ---"
+            set +e
+            PYTHONUNBUFFERED=1 uv run --no-sync gfp check drc build/gds/sample_drc_errors.gds \
+              --outpath build/lyrdb/sample_drc_errors.lyrdb --verbose >"build/drc_attempt_${attempt}.log" 2>&1
+            drc_exit=$?
+            set -e
+            echo "DRC exit code (attempt ${attempt}): ${drc_exit}"
+            if [ "$drc_exit" -eq 0 ] && [ -f build/lyrdb/sample_drc_errors.lyrdb ]; then
+              echo "DRC succeeded on attempt ${attempt}"
+              break
+            fi
+            if [ "$attempt" -lt "$max_attempts" ]; then
+              backoff=$((20 * (2 ** (attempt - 1))))
+              echo "DRC failed or report missing. Retrying after ${backoff}s..."
+              sleep "$backoff"
+            fi
+            attempt=$((attempt + 1))
+          done
+          exit "$drc_exit"
+
+      - id: drc-verify
+        name: Verify DRC errors found
+        if: steps.build-cell.outcome == 'success'
+        continue-on-error: true
+        run: |
+          if [ ! -f build/lyrdb/sample_drc_errors.lyrdb ]; then
+            echo "::error::DRC output file not found — gfp check drc likely failed (check Run DRC step output)"
+            exit 1
+          fi
+          errors=$(grep -c '<item>' build/lyrdb/sample_drc_errors.lyrdb) || errors=0
+          echo "DRC errors: $errors"
+          allow_zero=$(python3 -c "
+          import tomllib, pathlib
+          data = tomllib.loads(pathlib.Path('pyproject.toml').read_text())
+          print(str(data.get('tool', {}).get('gdsfactoryplus', {}).get('drc', {}).get('allow-zero-errors', False)).lower())
+          " 2>/dev/null || echo "false")
+          if [ "$errors" = "0" ] && [ "$allow_zero" != "true" ]; then
+            echo "::error::Expected DRC errors but found none"
+            exit 1
+          fi
+
+      - name: Redact DRC logs
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          api_key = os.environ.get("GFP_API_KEY", "").encode()
+          for log in Path("build").glob("drc_attempt_*.log"):
+              text = log.read_bytes()
+              if api_key:
+                  text = text.replace(api_key, b"***")
+                  log.write_bytes(text)
+              print(f"--- {log} ---")
+              print(text.decode(errors="replace"))
+          PY
+
+      - name: Upload DRC report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: drc-${{ steps.slug.outputs.slug }}
+          path: |
+            ${{ matrix.project-dir }}/build/lyrdb/
+            ${{ matrix.project-dir }}/build/drc_attempt_*.log
+          retention-days: 3
+
+      - id: result
+        name: Collect results
+        if: always()
+        working-directory: .
+        env:
+          OUTCOMES: >-
+            configure=${{ steps.configure.outcome }}
+            scripts=${{ steps.scripts.outcome }}
+            install=${{ steps.install.outcome }}
+            installed-version=${{ steps.installed-version.outcome }}
+            gfp-test=${{ steps.gfp-test.outcome }}
+            notebooks=${{ steps.notebooks.outcome }}
+          DRC_FIXTURE: ${{ steps.drc-fixture.outputs.present }}
+          DRC_OUTCOMES: >-
+            build-cell=${{ steps.build-cell.outcome }}
+            drc=${{ steps.drc.outcome }}
+            drc-verify=${{ steps.drc-verify.outcome }}
+        run: |
+          if [ "$DRC_FIXTURE" != "false" ]; then
+            OUTCOMES="$OUTCOMES $DRC_OUTCOMES"
+          fi
+          ok=true
+          for entry in $OUTCOMES; do
+            if [ "${entry#*=}" != "success" ]; then
+              echo "::error::$PROJECT_DIR: ${entry%%=*} ${entry#*=} - not uploading this sample project"
+              ok=false
+            fi
+          done
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+
+      - name: Upload pristine snapshot
+        if: always() && steps.result.outputs.ok == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sample-project-${{ steps.slug.outputs.slug }}
+          path: |
+            ${{ runner.temp }}/handoff/sample-project.tar
+            ${{ runner.temp }}/handoff/installed-version.txt
+          retention-days: 3
+
+      - name: Fail unless soft_fail
+        if: always() && steps.result.outputs.ok != 'true'
+        env:
+          SOFT_FAIL: ${{ inputs.soft_fail }}
+        run: |
+          if [ "$SOFT_FAIL" = "true" ]; then
+            echo "soft_fail is set: leaving this job green."
+            exit 0
+          fi
+          exit 1
+
+  nyanlib:
+    needs: discover
+    if: needs.discover.outputs.project-dirs != '' && needs.discover.outputs.project-dirs != '[]'
+    # generate_nyanlib.yml requests these; a called workflow can't be granted
+    # more than its caller job has.
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    uses: doplaydo/pdk-ci-workflow-public/.github/workflows/generate_nyanlib.yml@main
+    with:
+      # Only the build artifacts are wanted here, never the update PR.
+      open_pr: false
+      soft_fail: ${{ inputs.soft_fail }}
+      script_ref: ${{ inputs.script_ref }}
+    secrets:
+      GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
+      GFP_ECR_IMAGE: ${{ secrets.GFP_ECR_IMAGE }}
+      SHARED_SERVICES_AWS_OIDC_ROLE_ARN: ${{ secrets.SHARED_SERVICES_AWS_OIDC_ROLE_ARN }}
+
+  # Runs per project even when other projects' tests failed: a project is
+  # uploaded only if its own snapshot artifact exists (see test). A nyanlib
+  # failure doesn't block the upload: the project goes up without fresh
+  # nyanlib output, with a warning.
+  upload:
+    name: Upload ${{ matrix.project-dir }}
+    needs: [discover, test, nyanlib]
+    if: >-
+      !cancelled() &&
+      needs.discover.result == 'success' &&
+      needs.discover.outputs.project-dirs != '' && needs.discover.outputs.project-dirs != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project-dir: ${{ fromJSON(needs.discover.outputs.project-dirs) }}
+    env:
+      PROJECT_DIR: ${{ matrix.project-dir }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: slug
+        name: Compute project-dir slug
+        run: |
+          slug=$(echo "$PROJECT_DIR" | tr '/' '-' | sed 's/^-*//; s/-*$//')
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+
+      - id: download-snapshot
+        name: Download pristine snapshot
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sample-project-${{ steps.slug.outputs.slug }}
+          path: ${{ runner.temp }}/handoff
+
+      - id: nyanlib-ok
+        name: Check nyanlib generation succeeded
+        if: steps.download-snapshot.outcome == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nyanlib-ok-${{ steps.slug.outputs.slug }}
+          path: ${{ runner.temp }}/nyanlib-ok
+
+      - id: download-nyanlib
+        name: Download nyanlib artifact
+        if: steps.nyanlib-ok.outcome == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nyanlib-${{ steps.slug.outputs.slug }}
+          path: ${{ runner.temp }}/nyanlib
+
+      - id: assemble
+        name: Assemble archive contents
+        if: steps.download-snapshot.outcome == 'success'
+        continue-on-error: true
+        env:
+          FRESH_NYANLIB: ${{ steps.download-nyanlib.outcome == 'success' }}
+        run: |
+          snapshot="$RUNNER_TEMP/snapshot"
+          mkdir -p "$snapshot/build"
+          tar -xf "$RUNNER_TEMP/handoff/sample-project.tar" -C "$snapshot"
+          if [ "$FRESH_NYANLIB" != "true" ] || [ ! -s "$RUNNER_TEMP/nyanlib/models.nyanlib" ]; then
+            if [ -s "$snapshot/build/models.nyanlib" ]; then
+              shipped="the committed build/models.nyanlib + build/symbols/, which may be stale"
+            else
+              shipped="no models.nyanlib at all"
+            fi
+            msg="nyanlib generation failed for $PROJECT_DIR - uploading it anyway with $shipped"
+            echo "::warning title=Sample project uploaded without fresh nyanlib::$msg"
+            echo "### :warning: $msg" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Some repos commit a (possibly stale) build/ copy: replace it, don't merge.
+          cp "$RUNNER_TEMP/nyanlib/models.nyanlib" "$snapshot/build/"
+          rm -rf "$snapshot/build/symbols"
+          if [ -d "$RUNNER_TEMP/nyanlib/symbols" ]; then
+            cp -r "$RUNNER_TEMP/nyanlib/symbols" "$snapshot/build/"
+          fi
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
+
+      - id: upload-script
+        name: Download sample_project_upload script
+        if: steps.assemble.outcome == 'success'
+        continue-on-error: true
+        env:
+          SCRIPT_REF: ${{ inputs.script_ref }}
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/$SCRIPT_REF/scripts/sample_project_upload.py" \
+            -o "$RUNNER_TEMP/sample_project_upload.py"
+
+      - id: upload
+        name: Upload to the GDSFactory+ portal
+        if: steps.upload-script.outcome == 'success'
+        continue-on-error: true
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          uv run --no-project --with httpx python "$RUNNER_TEMP/sample_project_upload.py" upload \
+            "$RUNNER_TEMP/snapshot" \
+            --project-dir "$PROJECT_DIR" \
+            --version "$RELEASE_VERSION" \
+            --installed-version "$(cat "$RUNNER_TEMP/handoff/installed-version.txt")"
+
+      - name: Fail unless soft_fail
+        if: always() && steps.upload.outcome != 'success'
+        env:
+          SOFT_FAIL: ${{ inputs.soft_fail }}
+        run: |
+          echo "::error::$PROJECT_DIR was not uploaded (see the first failed step above)."
+          if [ "$SOFT_FAIL" = "true" ]; then
+            echo "soft_fail is set: leaving this job green."
+            exit 0
+          fi
+          exit 1

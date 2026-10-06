@@ -21,6 +21,7 @@ Minimal wrappers — each calls the upstream reusable workflow and forwards secr
 | `.github/workflows/model_coverage.yml` | PDK model-to-cell coverage check |
 | `.github/workflows/model_regression.yml` | Model-specific regression tests |
 | `.github/workflows/generate_nyanlib.yml` | Generate `<sample-project-dir>/build/models.nyanlib` + SVG symbols from the published root PDK package for each `*--sample-projects/` directory (auto-deployed by `check-template-drift` when sample dirs are present) |
+| `.github/workflows/sample-project-upload.yml` | Test each `*--sample-projects/` directory against the published PDK, generate its nyanlib, and upload it to the GDSFactory+ portal on manual dispatch or pushes to `main` that touch sample projects (auto-deployed by `check-template-drift` when sample dirs are present) |
 | `.github/workflows/update_badges.yml` | Generate coverage, model, issue, and PR badges |
 | `.github/workflows/code-security.yml` | SAST (Semgrep) and SCA (Trivy) security scans |
 

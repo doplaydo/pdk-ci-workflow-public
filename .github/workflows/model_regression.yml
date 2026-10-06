@@ -2,6 +2,10 @@ name: Model Regression
 on:
   workflow_call:
     inputs:
+      enforce-model-metadata:
+        description: Fail CI for invalid metadata bindings or legacy-only SAX/Circulax assignments
+        type: boolean
+        default: false
       enforce-model-jittability:
         description: Fail CI when a concrete model is not JAX JIT-traceable
         type: boolean
@@ -29,6 +33,18 @@ jobs:
         with:
           enforce: ${{ inputs.enforce-model-jittability }}
         continue-on-error: ${{ ! inputs.enforce-model-jittability }}
+      - name: Check model metadata
+        uses: doplaydo/pdk-ci-workflow-public/actions/check_model_metadata@main
+        with:
+          enforce: ${{ inputs.enforce-model-metadata }}
+      - name: Upload model metadata report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: model-metadata-report
+          path: build/model-metadata.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Run model regression tests
         env:
           PYTEST_ADDOPTS: "-k model --tb=short"
