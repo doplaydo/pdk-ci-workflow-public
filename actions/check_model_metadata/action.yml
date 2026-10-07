@@ -1,0 +1,15 @@
+name: Check PDK model metadata
+description: Validate SAX/Circulax bindings and detect legacy-only model assignments
+inputs:
+  enforce:
+    description: Emit error annotations instead of audit warnings
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Validate configured PDK model bindings
+      shell: bash
+      run: uv run --no-sync python "$GITHUB_ACTION_PATH/../../scripts/check_model_metadata.py" --json build/model-metadata.json || [ "$PDK_MODEL_METADATA_ENFORCE" != "true" ]
+      env:
+        PDK_MODEL_METADATA_ENFORCE: ${{ inputs.enforce }}

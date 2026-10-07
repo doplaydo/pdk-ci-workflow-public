@@ -272,3 +272,18 @@ class TestSyncMarkerStripping:
             if local.exists():
                 assert "SYNC-PRIVATE:" not in local.read_text()
                 assert "SYNC-PUBLIC:" not in local.read_text()
+
+
+class TestSampleProjectUploadTemplate:
+    REL = ".github/workflows/sample-project-upload.yml"
+
+    def test_enforced_when_sample_projects_dir_exists(self, pdk_root: Path) -> None:
+        (pdk_root / "my-pdk--sample-projects").mkdir()
+        main()
+        text = (pdk_root / self.REL).read_text()
+        assert "sample-project-upload.yml@main" in text
+        assert "SYNC-PRIVATE:" not in text
+
+    def test_not_enforced_without_sample_projects_dir(self, pdk_root: Path) -> None:
+        main()
+        assert not (pdk_root / self.REL).exists()
