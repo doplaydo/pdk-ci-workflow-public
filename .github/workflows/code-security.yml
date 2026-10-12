@@ -1,0 +1,42 @@
+name: Code Security
+
+on:
+  workflow_call:
+  pull_request:
+    paths:
+      - .github/workflows/code-security.yml
+      - templates/.github/workflows/code-security.yml
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/code-security.yml
+      - templates/.github/workflows/code-security.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-code-security
+  cancel-in-progress: true
+
+jobs:
+  sast:
+    runs-on: ubuntu-latest
+    container: semgrep/semgrep:1.180.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Findings are informational; scanner errors still fail the job.
+      - name: Scan code and secrets
+        run: semgrep scan --config p/default --config p/secrets --metrics=off .
+
+  sca:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Scan dependencies, configuration, and secrets
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,misconfig,secret
+          format: table
+          exit-code: '0'

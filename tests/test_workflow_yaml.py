@@ -123,8 +123,8 @@ class TestTemplateWorkflowYaml:
 
     def test_templates_reference_pdk_ci_workflow(self) -> None:
         """Template ``uses:`` values should reference the central CI
-        workflows repo or ``doplaydo/infra``."""
-        allowed_orgs = ("doplaydo/pdk-ci-workflow-public", "doplaydo/infra")
+        workflows repo accessible to public PDKs."""
+        allowed_orgs = ("doplaydo/pdk-ci-workflow-public/",)
         for path in _all_workflow_files(TEMPLATES_DIR):
             data = _load_yaml(path)
             if data is None or "jobs" not in data:
