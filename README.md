@@ -169,6 +169,7 @@ PDK repos must have these secrets configured and forwarded explicitly in their w
 | `GFP_API_KEY` | test_code, test-sample-projects, pages, drc, test_coverage, model_coverage, model_regression, update_badges, generate_nyanlib, sample-project-upload |
 | `GFP_ECR_IMAGE` | generate_nyanlib, sample-project-upload — full ECR image URI for `gfp-server` |
 | `SHARED_SERVICES_AWS_OIDC_ROLE_ARN` | generate_nyanlib, sample-project-upload — IAM role ARN for OIDC-based ECR pull (`gdsfactory-pull` role) |
+| `GSP_SYNC_TOKEN` | sample-project-upload — optional; fine-grained PAT with contents + pull-requests write on doplaydo/gfp-sample-projects only; unset skips the gfp-sample-projects sync with a notice |
 | `ANTHROPIC_API_KEY` | claude-pr-review |
 | `SIMCLOUD_APIKEY` | pages |
 | `GITHUB_TOKEN` | issue, update_badges, generate_nyanlib (automatic) |
