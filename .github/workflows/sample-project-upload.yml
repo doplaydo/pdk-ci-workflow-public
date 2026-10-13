@@ -29,6 +29,10 @@ on:
     secrets:
       GFP_API_KEY:
         required: false
+      # Contents + pull-requests write on doplaydo/gfp-sample-projects. Empty
+      # skips the sync with a notice.
+      GSP_SYNC_TOKEN:
+        required: false
       GFP_ECR_IMAGE:
         description: 'Full ECR image URI for gfp-server (forwarded to generate_nyanlib.yml)'
         required: true
@@ -383,6 +387,8 @@ jobs:
         project-dir: ${{ fromJSON(needs.discover.outputs.project-dirs) }}
     env:
       PROJECT_DIR: ${{ matrix.project-dir }}
+      # Secrets can't appear in a step's `if:`.
+      HAS_GSP_SYNC_TOKEN: ${{ secrets.GSP_SYNC_TOKEN != '' }}
     defaults:
       run:
         shell: bash
@@ -475,6 +481,52 @@ jobs:
             --project-dir "$PROJECT_DIR" \
             --version "$RELEASE_VERSION" \
             --installed-version "$(cat "$RUNNER_TEMP/handoff/installed-version.txt")"
+
+      # Mirror what the portal just got into doplaydo/gfp-sample-projects, as a
+      # sync/<dir> PR, for projects mapped in its .github/sample-projects-sources.yml.
+      # Same gate as the portal: only after a successful upload.
+      - name: Skip gfp-sample-projects sync (no GSP_SYNC_TOKEN)
+        if: steps.upload.outcome == 'success' && env.HAS_GSP_SYNC_TOKEN != 'true'
+        run: echo "::notice::GSP_SYNC_TOKEN is not set - $PROJECT_DIR not synced to gfp-sample-projects"
+
+      - id: gsp-sync-script
+        name: Download sync_gfp_sample_project script
+        if: steps.upload.outcome == 'success' && env.HAS_GSP_SYNC_TOKEN == 'true'
+        continue-on-error: true
+        env:
+          SCRIPT_REF: ${{ inputs.script_ref }}
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/$SCRIPT_REF/scripts/sync_gfp_sample_project.py" \
+            -o "$RUNNER_TEMP/sync_gfp_sample_project.py"
+
+      - id: gsp-sync
+        name: Sync to gfp-sample-projects
+        if: steps.gsp-sync-script.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GSP_SYNC_TOKEN }}
+          # Reads this repo's history for the ordering check (compare API).
+          SOURCE_GH_TOKEN: ${{ github.token }}
+        run: |
+          gh auth setup-git
+          uv run --no-project --with pyyaml python "$RUNNER_TEMP/sync_gfp_sample_project.py" sync \
+            "$RUNNER_TEMP/handoff/sample-project.tar" \
+            --source-repo "$GITHUB_REPOSITORY" \
+            --project-dir "$PROJECT_DIR" \
+            --source-sha "$GITHUB_SHA" \
+            --pdk-version "$(cat "$RUNNER_TEMP/handoff/installed-version.txt")"
+
+      - name: Fail on gfp-sample-projects sync failure unless soft_fail
+        if: always() && (steps.gsp-sync-script.outcome == 'failure' || steps.gsp-sync.outcome == 'failure')
+        env:
+          SOFT_FAIL: ${{ inputs.soft_fail }}
+        run: |
+          echo "::error::$PROJECT_DIR was uploaded but not synced to gfp-sample-projects (see the failed step above)."
+          if [ "$SOFT_FAIL" = "true" ]; then
+            echo "soft_fail is set: leaving this job green."
+            exit 0
+          fi
+          exit 1
 
       - name: Fail unless soft_fail
         if: always() && steps.upload.outcome != 'success'
