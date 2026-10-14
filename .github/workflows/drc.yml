@@ -21,6 +21,21 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.12"
+      - name: Constrain legacy gfp in CI
+        run: |
+          uv run --no-project --with tomlkit python - <<'PYEOF'
+          from pathlib import Path
+          import tomlkit
+
+          path = Path("pyproject.toml")
+          project = tomlkit.parse(path.read_text())
+          uv = project.setdefault("tool", tomlkit.table()).setdefault("uv", tomlkit.table())
+          constraints = list(uv.get("constraint-dependencies", []))
+          if "gdsfactoryplus<2" not in constraints:
+              constraints.append("gdsfactoryplus<2")
+          uv["constraint-dependencies"] = constraints
+          path.write_text(tomlkit.dumps(project))
+          PYEOF
       - name: Install dependencies
         run: uv sync --all-extras -P gdsfactoryplus
       - name: Configure gfp
