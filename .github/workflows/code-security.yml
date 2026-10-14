@@ -2,6 +2,12 @@ name: Code Security
 
 on:
   workflow_call:
+    inputs:
+      fail-on-findings:
+        description: Fail the job when Semgrep or Trivy reports findings
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -21,10 +27,16 @@ jobs:
         run: |
           pipx install "semgrep==${SEMGREP_VERSION}"
           semgrep --version
-      # Findings are advisory: without --error Semgrep exits 0 on findings and non-zero only on
-      # scanner errors, which fail the job.
+      # --error makes Semgrep exit non-zero on findings; scanner errors fail the job either way.
       - name: Run Semgrep SAST and secret scan
-        run: semgrep scan --metrics=off --config p/ci --config p/secrets --text --output semgrep-results.txt
+        env:
+          FAIL_ON_FINDINGS: ${{ inputs.fail-on-findings }}
+        run: |
+          args=(--metrics=off --config p/ci --config p/secrets --text --output semgrep-results.txt)
+          if [ "$FAIL_ON_FINDINGS" = "true" ]; then
+            args+=(--error)
+          fi
+          semgrep scan "${args[@]}"
       - name: Publish findings
         if: ${{ !cancelled() && hashFiles('semgrep-results.txt') != '' }}
         run: |
@@ -51,16 +63,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # exit-code 0 keeps findings advisory; scanner errors still fail the job.
+      # exit-code 1 fails the job on findings; scanner errors fail the job either way. Only HIGH and
+      # CRITICAL findings with a fixed version are reported, since PDKs can't remediate the rest.
       - name: Run Trivy vulnerability, misconfiguration, and secret scan
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
           scanners: vuln,misconfig,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
           format: table
           output: trivy-results.txt
-          exit-code: '0'
+          exit-code: ${{ inputs.fail-on-findings && '1' || '0' }}
       - name: Publish findings
         if: ${{ !cancelled() && hashFiles('trivy-results.txt') != '' }}
         run: |
