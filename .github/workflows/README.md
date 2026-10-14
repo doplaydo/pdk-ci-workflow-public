@@ -17,6 +17,7 @@ The docs workflow accepts an optional `runner` input, defaulting to `ubuntu-late
 | `claude-pr-review.yml` | review | `ANTHROPIC_API_KEY` | AI code review via Claude Sonnet 4. Auto-runs on PR open/reopen; re-runs only when a human posts `/claude-api review` on the PR |
 | `drc.yml` | drc | `GFP_API_KEY` | Design Rule Check with badge generation |
 | `gds-xor.yml` | gds-xor | `GITHUB_TOKEN` | Per-layer XOR of every `*.gds` a PR changes: uploads the XOR GDS plus a PDF report with one page per differing layer, and posts a sticky comment with the difference area in um^2. Inline images need an attachment upload, which is attributed to a user account, so with only `GITHUB_TOKEN` the comment links the PDF instead |
+| `code-security.yml` | semgrep, trivy | — | Semgrep (`p/ci`, `p/secrets`) and Trivy (vuln, misconfig, secret) filesystem scans with public tooling and read-only access. Findings are advisory, published to the job summary and as artifacts; scanner errors fail the job |
 | `issue.yml` | add-label | `GITHUB_TOKEN` | Auto-labels issues with the `pdk` tag plus a per-repository `pdk:<repo-name>` tag |
 | `test_coverage.yml` | coverage | `GFP_API_KEY` | Pytest with line coverage reporting |
 | `model_coverage.yml` | model-coverage | `GFP_API_KEY` | PDK model-to-cell coverage check |
