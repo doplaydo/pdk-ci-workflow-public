@@ -125,7 +125,7 @@ jobs:
         run: |
           # Retry to ride out transient network timeouts talking to the GFP API.
           for attempt in 1 2 3; do
-            if uv run --no-project --with gdsfactoryplus gfp configure --api-key "$GFP_API_KEY" --uv; then
+            if uv run --no-project --with "gdsfactoryplus<2" gfp configure --api-key "$GFP_API_KEY" --uv; then
               exit 0
             fi
             echo "gfp configure failed (attempt ${attempt}/3); retrying after $((10 * attempt))s..."
