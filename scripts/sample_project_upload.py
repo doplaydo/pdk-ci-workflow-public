@@ -1,8 +1,7 @@
 """Zip a sample project and upload it to the GDSFactory+ portal.
 
 Run from the PDK repo root against a pristine snapshot of one
-``{pdk_package}--sample-projects/{template}--project/`` directory (already
-holding its generated ``build/models.nyanlib`` + ``build/symbols/``). The
+``{pdk_package}--sample-projects/{template}--project/`` directory. The
 portal row key is resolved from the portal's own catalog, not from per-repo
 config:
 
@@ -13,7 +12,7 @@ config:
 - ``version``: ``--version`` when given (the release being published),
   otherwise the sample project's exact (``==``) pin on its PDK distribution,
   otherwise ``--installed-version``. It must match ``--installed-version``
-  (what the project was actually tested and its nyanlib generated against).
+  (what the project was actually tested against).
 
 Refuses to upload when another sample project in the repo resolves to the
 same ``(pdk_name, pdk_import_name)``, since the two would overwrite each

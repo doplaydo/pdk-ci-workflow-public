@@ -39,14 +39,17 @@ TEMPLATES: list[str] = [
 
 
 # Files previously shipped as templates that are now fetched at runtime by
-# reusable workflows.  If they still exist in a PDK repo the hook deletes them
-# so stale copies don't shadow the centrally-maintained version.
+# reusable workflows, or retired outright.  If they still exist in a PDK repo
+# the hook deletes them so stale copies don't shadow the centrally-maintained
+# version or call a reusable workflow that no longer exists.
 DEPRECATED_TEMPLATES: list[str] = [
     "build_cell.py",
     "sync_changelog.py",
     ".github/release-drafter.yml",
     ".github/workflows/release-drafter.yml",
     ".github/workflows/auto-label-pdk.yml",
+    # nyanlib generation was removed from CI; its reusable workflow is gone.
+    ".github/workflows/generate_nyanlib.yml",
 ]
 
 # Files that must never be committed to a PDK repo (secrets, local env
@@ -64,7 +67,6 @@ FORBIDDEN_FILES: list[str] = [
 # List of (template_path, glob_pattern) pairs.
 CONDITIONAL_TEMPLATES: list[tuple[str, str]] = [
     (".github/workflows/sample-projects.yml", "*--sample-projects"),
-    (".github/workflows/generate_nyanlib.yml", "*--sample-projects"),
     (".github/workflows/sample-project-upload.yml", "*--sample-projects"),
 ]
 
@@ -129,7 +131,7 @@ def main() -> int:
         local = Path(rel)
         if local.exists():
             local.unlink()
-            result.error(f"deleted deprecated template {rel} (now fetched by CI)")
+            result.error(f"deleted deprecated template {rel}")
 
     for rel in FORBIDDEN_FILES:
         local = Path(rel)
