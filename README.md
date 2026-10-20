@@ -122,9 +122,8 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 | `test_coverage.yml` | coverage | Pytest with line coverage reporting |
 | `model_coverage.yml` | model-coverage | PDK model-to-cell coverage check |
 | `model_regression.yml` | model-regression | Model regression tests, JAX audit, and metadata audit with opt-in enforcement |
-| `generate_nyanlib.yml` | discover, generate | Installs each `*--sample-projects/` directory from configured package indexes while ignoring local source overrides for the root PDK package, runs `gfp serve` inside the `gfp-server` container, and produces `<dir>/build/models.nyanlib` + SVG symbols per directory; opens an update PR per directory only on a manual `workflow_dispatch` from `main` |
 | `update_badges.yml` | badges | Generate coverage, model, issue, and PR badges |
-| `sample-project-upload.yml` | discover, test, nyanlib, upload | Tests each `*--sample-projects/` directory against the published PDK, generates its nyanlib, and uploads a zip of it to the GDSFactory+ portal |
+| `sample-project-upload.yml` | discover, test, upload | Tests each `*--sample-projects/` directory against the published PDK and uploads a zip of it to the GDSFactory+ portal |
 
 PDK repos call these workflows from thin wrapper files in `.github/workflows/`, passing secrets explicitly. See `templates/.github/workflows/` for ready-to-copy wrappers.
 
@@ -166,13 +165,11 @@ PDK repos must have these secrets configured and forwarded explicitly in their w
 
 | Secret | Used by |
 |--------|---------|
-| `GFP_API_KEY` | test_code, test-sample-projects, pages, drc, test_coverage, model_coverage, model_regression, update_badges, generate_nyanlib, sample-project-upload |
-| `GFP_ECR_IMAGE` | generate_nyanlib, sample-project-upload — full ECR image URI for `gfp-server` |
-| `SHARED_SERVICES_AWS_OIDC_ROLE_ARN` | generate_nyanlib, sample-project-upload — IAM role ARN for OIDC-based ECR pull (`gdsfactory-pull` role) |
+| `GFP_API_KEY` | test_code, test-sample-projects, pages, drc, test_coverage, model_coverage, model_regression, update_badges, sample-project-upload |
 | `GSP_SYNC_TOKEN` | sample-project-upload — optional; fine-grained PAT with contents + pull-requests write on doplaydo/gfp-sample-projects only; unset skips the gfp-sample-projects sync with a notice |
 | `ANTHROPIC_API_KEY` | claude-pr-review |
 | `SIMCLOUD_APIKEY` | pages |
-| `GITHUB_TOKEN` | issue, update_badges, generate_nyanlib (automatic) |
+| `GITHUB_TOKEN` | issue, update_badges (automatic) |
 
 ### Repository Variables
 
@@ -222,7 +219,7 @@ See [`hooks/README.md`](hooks/README.md) for detailed documentation.
 | `check-makefile-targets` | Required targets (install, test) and recommended targets (docs, build, test-force, update-pre, dev). Auto-fix: rewrites `dev` target's stale pre-commit-config fetch to `curl` against the public repo (exit 1; re-run exits 0) |
 | `check-workflows` | `.github/workflows/` has test_code.yml with pre-commit and test jobs |
 | `check-precommit-config` | `.pre-commit-config.yaml` includes required hooks (trailing-whitespace, end-of-file-fixer, ruff or ruff-lint, ruff-format, pydocstyle) |
-| `check-template-drift` | `.github/dependabot.yml` and `.github/workflows/*.yml` thin callers match upstream templates. Auto-fixes by rewriting or creating files. Conditionally deploys `sample-projects.yml`, `generate_nyanlib.yml`, and `sample-project-upload.yml` in repos containing `*--sample-projects/` directories. Deletes deprecated templates (listed in `DEPRECATED_TEMPLATES`) if still present. |
+| `check-template-drift` | `.github/dependabot.yml` and `.github/workflows/*.yml` thin callers match upstream templates. Auto-fixes by rewriting or creating files. Conditionally deploys `sample-projects.yml` and `sample-project-upload.yml` in repos containing `*--sample-projects/` directories. Deletes deprecated templates (listed in `DEPRECATED_TEMPLATES`) if still present. |
 
 #### Multi-band
 
@@ -249,8 +246,7 @@ Reference configuration files are provided in `templates/` for onboarding new PD
 | `.github/workflows/test_coverage.yml` | Pytest with line coverage reporting |
 | `.github/workflows/model_coverage.yml` | PDK model-to-cell coverage check |
 | `.github/workflows/model_regression.yml` | Model-specific regression tests |
-| `.github/workflows/generate_nyanlib.yml` | Generate `<sample-project-dir>/build/models.nyanlib` + SVG symbols from the published root PDK package for each `*--sample-projects/` directory (auto-deployed by `check-template-drift` when sample dirs are present) |
-| `.github/workflows/sample-project-upload.yml` | Test each `*--sample-projects/` directory against the published PDK, generate its nyanlib, and upload it to the GDSFactory+ portal on manual dispatch or pushes to `main` that touch sample projects (auto-deployed by `check-template-drift` when sample dirs are present) |
+| `.github/workflows/sample-project-upload.yml` | Test each `*--sample-projects/` directory against the published PDK and upload it to the GDSFactory+ portal on manual dispatch or pushes to `main` that touch sample projects (auto-deployed by `check-template-drift` when sample dirs are present) |
 | `.github/workflows/update_badges.yml` | Generate coverage, model, issue, and PR badges |
 | `.github/workflows/code-security.yml` | SAST (Semgrep) and SCA (Trivy) security scans |
 | `.github/dependabot.yml` | Monthly pip and github-actions dependency updates |
@@ -288,9 +284,7 @@ PDK repositories consuming these workflows need:
 ### GitHub Secrets
 
 For PDK repositories (passed explicitly in each wrapper workflow):
-- `GFP_API_KEY` - GDSFactory Platform validation and package-index configuration (test_code, pages, drc, test_coverage, model_coverage, model_regression, update_badges, generate_nyanlib)
-- `GFP_ECR_IMAGE` - Full ECR image URI for `gfp-server` (generate_nyanlib)
-- `SHARED_SERVICES_AWS_OIDC_ROLE_ARN` - IAM role ARN for OIDC-based ECR pull, `gdsfactory-pull` role (generate_nyanlib)
+- `GFP_API_KEY` - GDSFactory Platform validation and package-index configuration (test_code, pages, drc, test_coverage, model_coverage, model_regression, update_badges)
 - `ANTHROPIC_API_KEY` - Claude code reviews (claude-pr-review)
 - `SIMCLOUD_APIKEY` - Simulation cloud access (pages)
 

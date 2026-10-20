@@ -21,8 +21,8 @@ on:
         default: false
       script_ref:
         description: >-
-          Ref to fetch scripts from (see generate_nyanlib.yml's input of the
-          same name) - override only when testing this workflow from a branch.
+          Ref to fetch scripts from - override only when testing this
+          workflow from a branch.
         required: false
         type: string
         default: 'main'
@@ -33,12 +33,13 @@ on:
       # skips the sync with a notice.
       GSP_SYNC_TOKEN:
         required: false
+      # Unused since nyanlib generation was removed. Still declared so
+      # callers that haven't re-synced their template don't fail with an
+      # undefined-secret error; drop once the fleet is synced.
       GFP_ECR_IMAGE:
-        description: 'Full ECR image URI for gfp-server (forwarded to generate_nyanlib.yml)'
-        required: true
+        required: false
       SHARED_SERVICES_AWS_OIDC_ROLE_ARN:
-        description: 'IAM role ARN for OIDC-based ECR pull (forwarded to generate_nyanlib.yml)'
-        required: true
+        required: false
 
 env:
   GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
@@ -151,8 +152,7 @@ jobs:
         continue-on-error: true
         env:
           PDK_PACKAGE: ${{ steps.pdk-package.outputs.package }}
-        # Same as generate_nyanlib.yml: ignore any tool.uv.sources override
-        # pointing at the checked-out repo, so what is tested is what users
+        # Ignore any tool.uv.sources override pointing at the checked-out repo, so what is tested is what users
         # install.
         run: |
           # The uploaded project was snapshotted before this CI-only constraint.
@@ -364,33 +364,11 @@ jobs:
           fi
           exit 1
 
-  nyanlib:
-    needs: discover
-    if: needs.discover.outputs.project-dirs != '' && needs.discover.outputs.project-dirs != '[]'
-    # generate_nyanlib.yml requests these; a called workflow can't be granted
-    # more than its caller job has.
-    permissions:
-      contents: write
-      pull-requests: write
-      id-token: write
-    uses: doplaydo/pdk-ci-workflow-public/.github/workflows/generate_nyanlib.yml@main
-    with:
-      # Only the build artifacts are wanted here, never the update PR.
-      open_pr: false
-      soft_fail: ${{ inputs.soft_fail }}
-      script_ref: ${{ inputs.script_ref }}
-    secrets:
-      GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
-      GFP_ECR_IMAGE: ${{ secrets.GFP_ECR_IMAGE }}
-      SHARED_SERVICES_AWS_OIDC_ROLE_ARN: ${{ secrets.SHARED_SERVICES_AWS_OIDC_ROLE_ARN }}
-
   # Runs per project even when other projects' tests failed: a project is
-  # uploaded only if its own snapshot artifact exists (see test). A nyanlib
-  # failure doesn't block the upload: the project goes up without fresh
-  # nyanlib output, with a warning.
+  # uploaded only if its own snapshot artifact exists (see test).
   upload:
     name: Upload ${{ matrix.project-dir }}
-    needs: [discover, test, nyanlib]
+    needs: [discover, test]
     if: >-
       !cancelled() &&
       needs.discover.result == 'success' &&
@@ -424,51 +402,17 @@ jobs:
           name: sample-project-${{ steps.slug.outputs.slug }}
           path: ${{ runner.temp }}/handoff
 
-      - id: nyanlib-ok
-        name: Check nyanlib generation succeeded
-        if: steps.download-snapshot.outcome == 'success'
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: nyanlib-ok-${{ steps.slug.outputs.slug }}
-          path: ${{ runner.temp }}/nyanlib-ok
-
-      - id: download-nyanlib
-        name: Download nyanlib artifact
-        if: steps.nyanlib-ok.outcome == 'success'
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: nyanlib-${{ steps.slug.outputs.slug }}
-          path: ${{ runner.temp }}/nyanlib
-
       - id: assemble
         name: Assemble archive contents
         if: steps.download-snapshot.outcome == 'success'
         continue-on-error: true
-        env:
-          FRESH_NYANLIB: ${{ steps.download-nyanlib.outcome == 'success' }}
         run: |
           snapshot="$RUNNER_TEMP/snapshot"
-          mkdir -p "$snapshot/build"
+          mkdir -p "$snapshot"
           tar -xf "$RUNNER_TEMP/handoff/sample-project.tar" -C "$snapshot"
-          if [ "$FRESH_NYANLIB" != "true" ] || [ ! -s "$RUNNER_TEMP/nyanlib/models.nyanlib" ]; then
-            if [ -s "$snapshot/build/models.nyanlib" ]; then
-              shipped="the committed build/models.nyanlib + build/symbols/, which may be stale"
-            else
-              shipped="no models.nyanlib at all"
-            fi
-            msg="nyanlib generation failed for $PROJECT_DIR - uploading it anyway with $shipped"
-            echo "::warning title=Sample project uploaded without fresh nyanlib::$msg"
-            echo "### :warning: $msg" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          # Some repos commit a (possibly stale) build/ copy: replace it, don't merge.
-          cp "$RUNNER_TEMP/nyanlib/models.nyanlib" "$snapshot/build/"
-          rm -rf "$snapshot/build/symbols"
-          if [ -d "$RUNNER_TEMP/nyanlib/symbols" ]; then
-            cp -r "$RUNNER_TEMP/nyanlib/symbols" "$snapshot/build/"
-          fi
+          # nyanlib generation was removed from CI: don't ship a stale
+          # committed copy either.
+          rm -rf "$snapshot/build/models.nyanlib" "$snapshot/build/symbols"
 
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
