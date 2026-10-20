@@ -126,7 +126,7 @@ jobs:
         run: |
           # Retry to ride out transient network timeouts talking to the GFP API.
           for attempt in 1 2 3; do
-            if uv run --no-project --with "gdsfactoryplus<2" gfp configure --api-key "$GFP_API_KEY" --uv; then
+            if uv run --no-project --with gdsfactoryplus gfp configure --api-key "$GFP_API_KEY" --uv; then
               exit 0
             fi
             echo "gfp configure failed (attempt ${attempt}/3); retrying after $((10 * attempt))s..."
@@ -155,20 +155,6 @@ jobs:
         # Ignore any tool.uv.sources override pointing at the checked-out repo, so what is tested is what users
         # install.
         run: |
-          # The uploaded project was snapshotted before this CI-only constraint.
-          uv run --no-project --with tomlkit python - <<'PYEOF'
-          from pathlib import Path
-          import tomlkit
-
-          path = Path("pyproject.toml")
-          project = tomlkit.parse(path.read_text())
-          uv = project.setdefault("tool", tomlkit.table()).setdefault("uv", tomlkit.table())
-          constraints = list(uv.get("constraint-dependencies", []))
-          if "gdsfactoryplus<2" not in constraints:
-              constraints.append("gdsfactoryplus<2")
-          uv["constraint-dependencies"] = constraints
-          path.write_text(tomlkit.dumps(project))
-          PYEOF
           uv sync --no-sources-package "$PDK_PACKAGE" --all-extras --all-groups
 
       # Upload refuses unless this equals the version being uploaded, so a
