@@ -22,6 +22,7 @@ def test_public_security_projection_uses_public_scanners():
         "pdk-ci-workflow-public/.github/workflows/code-security.yml@main"
     )
     assert security["permissions"] == {"contents": "read"}
+    assert workflow["permissions"] == {"contents": "read"}
     assert "doplaydo/infra" not in projected
 
     reusable = yaml.safe_load(REUSABLE.read_text())
