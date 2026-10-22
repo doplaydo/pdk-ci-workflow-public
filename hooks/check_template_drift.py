@@ -43,6 +43,8 @@ TEMPLATES: list[str] = [
 # the hook deletes them so stale copies don't shadow the centrally-maintained
 # version or call a reusable workflow that no longer exists.
 DEPRECATED_TEMPLATES: list[str] = [
+    ".github/workflows/sample-projects.yml",
+    ".github/workflows/sample-project-upload.yml",
     "build_cell.py",
     "sync_changelog.py",
     ".github/release-drafter.yml",
@@ -66,8 +68,8 @@ FORBIDDEN_FILES: list[str] = [
 # Templates enforced only when a matching directory glob exists in the PDK repo.
 # List of (template_path, glob_pattern) pairs.
 CONDITIONAL_TEMPLATES: list[tuple[str, str]] = [
-    (".github/workflows/sample-projects.yml", "*--sample-projects"),
-    (".github/workflows/sample-project-upload.yml", "*--sample-projects"),
+    (".github/workflows/sample-projects-editable.yml", "*--sample-projects"),
+    (".github/workflows/sample-projects-released.yml", "*--sample-projects"),
 ]
 
 
@@ -139,6 +141,7 @@ def main() -> int:
             continue
         tracked = subprocess.run(
             ["git", "ls-files", "--error-unmatch", rel],
+            check=False,
             capture_output=True,
             text=True,
         )

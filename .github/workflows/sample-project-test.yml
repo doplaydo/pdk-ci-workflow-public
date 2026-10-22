@@ -1,0 +1,382 @@
+name: Sample Project Test
+
+on:
+  workflow_call:
+    inputs:
+      projects:
+        description: JSON list of {slug, project_dir} objects.
+        required: true
+        type: string
+      pdk_source:
+        description: editable or released PDK installation.
+        required: true
+        type: string
+      gfp_version:
+        required: false
+        type: string
+        default: ''
+      script_ref:
+        required: false
+        type: string
+        default: 'main'
+    secrets:
+      GFP_API_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test ${{ matrix.project.project_dir }}
+    if: inputs.projects != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ fromJSON(inputs.projects) }}
+    env:
+      GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
+      UV_INDEX_STRATEGY: unsafe-best-match
+      RAY_ENABLE_UV_RUN_RUNTIME_ENV: "0"
+      PROJECT_DIR: ${{ matrix.project.project_dir }}
+      PDK_SOURCE: ${{ inputs.pdk_source }}
+      GFP_VERSION: ${{ inputs.gfp_version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - id: download
+        name: Download committed sample project
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sample-project-${{ matrix.project.slug }}
+          path: ${{ runner.temp }}/package
+
+      - id: extract
+        name: Unzip outside the PDK checkout
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/project" "$RUNNER_TEMP/tested"
+          unzip -q "$RUNNER_TEMP/package/sample-project.zip" -d "$RUNNER_TEMP/project"
+          cp "$RUNNER_TEMP/package/meta.json" "$RUNNER_TEMP/tested/meta.json"
+          case "$PDK_SOURCE" in editable|released) ;; *) exit 1 ;; esac
+
+      - id: checkout
+        name: Check out the PDK (editable mode)
+        if: inputs.pdk_source == 'editable'
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: pdk
+          persist-credentials: false
+
+      - id: uv
+        name: Set up uv and Python 3.12
+        continue-on-error: true
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
+
+      - id: scripts
+        name: Download test helpers
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}
+        env:
+          SCRIPT_REF: ${{ inputs.script_ref }}
+        run: |
+          for script in sample_project_ci.py build_cell.py; do
+            curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/$SCRIPT_REF/scripts/$script" \
+              -o "$RUNNER_TEMP/$script"
+          done
+
+      - id: editable
+        name: Prepare variant and replace editable distribution source
+        if: inputs.pdk_source == 'editable'
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          uv run --no-project --with tomlkit python - <<'PYCODE'
+          import json, os, pathlib, subprocess, sys, tomllib
+          sys.path.insert(0, os.environ['RUNNER_TEMP'])
+          from sample_project_ci import variant
+          checkout = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / 'pdk'
+          meta = json.loads((pathlib.Path(os.environ['RUNNER_TEMP']) / 'package/meta.json').read_text())
+          root = tomllib.loads((checkout / 'pyproject.toml').read_text())['project']['name']
+          name = variant(root, meta['pdk_distribution'])
+          if name and (checkout / 'Makefile').is_file():
+              target = f'prepare-{name}'
+              if subprocess.run(['make', '-C', str(checkout), '-n', target], capture_output=True).returncode == 0:
+                  subprocess.run(['make', '-C', str(checkout), target], check=True)
+          subprocess.run([sys.executable, os.environ['RUNNER_TEMP'] + '/sample_project_ci.py',
+                          'edit-pyproject', 'pyproject.toml', '--editable-source',
+                          f"{meta['pdk_distribution']}={checkout}"], check=True)
+          PYCODE
+
+      - id: constraint
+        name: Apply optional gdsfactoryplus constraint
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          uv run --no-project --with tomlkit python "$RUNNER_TEMP/sample_project_ci.py" \
+            edit-pyproject pyproject.toml --gfp-version "$GFP_VERSION"
+
+      - id: configure
+        name: Configure gfp (gdsfactoryplus ${{ inputs.gfp_version || 'latest' }})
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          gfp=gdsfactoryplus
+          if [ -n "$GFP_VERSION" ]; then gfp="gdsfactoryplus==$GFP_VERSION"; fi
+          for attempt in 1 2 3; do
+            if uv run --no-project --with "$gfp" gfp configure --api-key "$GFP_API_KEY" --uv; then exit 0; fi
+            sleep $((10 * attempt))
+          done
+          exit 1
+
+      - id: system
+        name: Install system dependencies
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libglu1-mesa libgl1 libxi-dev libxmu-dev libglu1-mesa-dev gmsh python3-gmsh
+
+      - id: install-minimal
+        name: Install without dev dependencies
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          for attempt in 1 2 3; do
+            if uv sync --no-dev; then exit 0; fi
+            sleep $((10 * attempt))
+          done
+          exit 1
+
+      - id: test-minimal
+        name: 'gfp test: no dev dependencies'
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/project
+        run: uv run --no-sync gfp test -v 2>&1 | tee "$RUNNER_TEMP/test-minimal.log"
+
+      - id: install-all
+        name: Install all extras and groups
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          for attempt in 1 2 3; do
+            if uv sync --all-extras --all-groups; then exit 0; fi
+            sleep $((10 * attempt))
+          done
+          exit 1
+
+      - id: installed-version
+        name: Record installed PDK version
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          dist=$(jq -er .pdk_distribution "$RUNNER_TEMP/package/meta.json")
+          uv run --no-sync python -c 'import importlib.metadata, sys; print(importlib.metadata.version(sys.argv[1]))' "$dist" \
+            > "$RUNNER_TEMP/tested/installed-version.txt"
+
+      - id: test-all
+        name: 'gfp test: all project cells'
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/project
+        run: uv run --no-sync gfp test -v 2>&1 | tee "$RUNNER_TEMP/test-all.log"
+
+      - id: notebook-tools
+        name: Install notebook tools
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/project
+        run: uv pip install nbconvert ipykernel
+
+      - id: notebooks
+        name: Run all notebooks
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          uv run --no-project --with tomlkit python "$RUNNER_TEMP/sample_project_ci.py" \
+            run-notebooks "$RUNNER_TEMP/project" --out "$RUNNER_TEMP/notebooks.json"
+
+      - id: drc-fixture
+        name: Look for sample_drc_errors fixture
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          if find . -name sample_drc_errors.py -not -path './.venv/*' | grep -q .; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$PROJECT_DIR has no sample_drc_errors.py fixture - skipping DRC"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: build-cell
+        name: Build sample_drc_errors cell
+        if: steps.drc-fixture.outputs.present == 'true' && steps.install-all.outcome == 'success' && steps.scripts.outcome == 'success'
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/project
+        run: uv run --no-sync python "$RUNNER_TEMP/build_cell.py" sample_drc_errors
+
+      - id: drc
+        name: Run DRC
+        if: steps.build-cell.outcome == 'success'
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          mkdir -p build/lyrdb
+          max_attempts=3
+          attempt=1
+          drc_exit=1
+          while [ "$attempt" -le "$max_attempts" ]; do
+            echo "--- Running DRC (attempt ${attempt}/${max_attempts}) ---"
+            set +e
+            PYTHONUNBUFFERED=1 uv run --no-sync gfp check drc build/gds/sample_drc_errors.gds \
+              --outpath build/lyrdb/sample_drc_errors.lyrdb --verbose >"build/drc_attempt_${attempt}.log" 2>&1
+            drc_exit=$?
+            set -e
+            echo "DRC exit code (attempt ${attempt}): ${drc_exit}"
+            if [ "$drc_exit" -eq 0 ] && [ -f build/lyrdb/sample_drc_errors.lyrdb ]; then
+              echo "DRC succeeded on attempt ${attempt}"
+              break
+            fi
+            if [ "$attempt" -lt "$max_attempts" ]; then
+              backoff=$((20 * (2 ** (attempt - 1))))
+              echo "DRC failed or report missing. Retrying after ${backoff}s..."
+              sleep "$backoff"
+            fi
+            attempt=$((attempt + 1))
+          done
+          exit "$drc_exit"
+
+      - id: drc-verify
+        name: Verify DRC errors found
+        if: steps.build-cell.outcome == 'success'
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          if [ ! -f build/lyrdb/sample_drc_errors.lyrdb ]; then
+            echo "::error::DRC output file not found — gfp check drc likely failed (check Run DRC step output)"
+            exit 1
+          fi
+          errors=$(grep -c '<item>' build/lyrdb/sample_drc_errors.lyrdb) || errors=0
+          echo "DRC errors: $errors"
+          allow_zero=$(python3 -c "
+          import tomllib, pathlib
+          data = tomllib.loads(pathlib.Path('pyproject.toml').read_text())
+          print(str(data.get('tool', {}).get('gdsfactoryplus', {}).get('drc', {}).get('allow-zero-errors', False)).lower())
+          " 2>/dev/null || echo "false")
+          if [ "$errors" = "0" ] && [ "$allow_zero" != "true" ]; then
+            echo "::error::Expected DRC errors but found none"
+            exit 1
+          fi
+
+      - id: redact
+        continue-on-error: true
+        name: Redact DRC logs
+        if: always()
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          api_key = os.environ.get("GFP_API_KEY", "").encode()
+          for log in Path("build").glob("drc_attempt_*.log"):
+              text = log.read_bytes()
+              if api_key:
+                  text = text.replace(api_key, b"***")
+                  log.write_bytes(text)
+              print(f"--- {log} ---")
+              print(text.decode(errors="replace"))
+          PY
+
+      - id: drc-report
+        continue-on-error: true
+        name: Upload DRC report
+        if: always() && steps.drc-fixture.outputs.present == 'true' && steps.redact.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: drc-${{ matrix.project.slug }}
+          path: |
+            ${{ runner.temp }}/project/build/lyrdb/
+            ${{ runner.temp }}/project/build/drc_attempt_*.log
+          retention-days: 3
+
+      - id: result
+        name: Collect every required check and exclusion
+        if: always()
+        working-directory: ${{ runner.temp }}
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: |
+          uv run --no-project --with tomlkit python - <<'PYCODE'
+          import json, os, pathlib, sys
+          sys.path.insert(0, os.environ['RUNNER_TEMP'])
+          from sample_project_ci import gfp_test_skips
+          temp = pathlib.Path(os.environ['RUNNER_TEMP'])
+          steps = json.loads(os.environ['STEPS'])
+          required = ['download', 'extract', 'uv', 'scripts', 'constraint', 'configure', 'system',
+                      'install-minimal', 'test-minimal', 'install-all', 'installed-version',
+                      'test-all', 'notebook-tools', 'notebooks']
+          if os.environ['PDK_SOURCE'] == 'editable':
+              required += ['checkout', 'editable']
+          fixture = steps.get('drc-fixture', {}).get('outputs', {}).get('present')
+          exclusions = []
+          drc_checks = ['drc-fixture', 'redact']
+          if fixture != 'false':
+              drc_checks += ['build-cell', 'drc', 'drc-verify', 'drc-report']
+          else:
+              exclusions.append('DRC: no sample_drc_errors.py fixture')
+          checks = {name: steps.get(name, {}).get('outcome', 'missing')
+                    for name in required + drc_checks}
+          ok = all(checks[name] == 'success' for name in required)
+          for name in drc_checks:
+              outcome = checks[name]
+              if outcome != 'success':
+                  result = 'failed' if outcome == 'failure' else outcome
+                  checks[name] = f'{result} (not blocking)'
+                  print(f"::warning::{os.environ['PROJECT_DIR']}: DRC step {name}: {checks[name]}")
+          for name in ('test-minimal', 'test-all'):
+              log = temp / f'{name}.log'
+              if log.exists():
+                  exclusions += gfp_test_skips(log.read_text())
+          (temp / 'checks.json').write_text(json.dumps(checks))
+          (temp / 'exclusions.json').write_text(json.dumps(exclusions))
+          report = {'checks': checks, 'exclusions': exclusions}
+          if (temp / 'notebooks.json').exists():
+              report['notebooks'] = json.loads((temp / 'notebooks.json').read_text())
+          (temp / 'tested/summary.json').write_text(json.dumps(report, indent=2))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print(f'ok={str(ok).lower()}', file=output)
+          PYCODE
+
+      - id: passed
+        name: Publish passed-test evidence only
+        if: always() && steps.result.outputs.ok == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sample-project-tested-${{ inputs.pdk_source }}-${{ matrix.project.slug }}
+          path: |
+            ${{ runner.temp }}/tested/meta.json
+            ${{ runner.temp }}/tested/installed-version.txt
+            ${{ runner.temp }}/tested/summary.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Summarize and decide job colour
+        if: always()
+        working-directory: ${{ runner.temp }}
+        env:
+          OK: ${{ steps.result.outputs.ok }}
+          PUBLISHED: ${{ steps.passed.outcome }}
+        run: |
+          args=()
+          if [ -f "$RUNNER_TEMP/notebooks.json" ]; then args+=(--notebooks "$RUNNER_TEMP/notebooks.json"); fi
+          uv run --no-project --with tomlkit python "$RUNNER_TEMP/sample_project_ci.py" summary \
+            --checks "$(cat "$RUNNER_TEMP/checks.json")" \
+            --exclusions "$RUNNER_TEMP/exclusions.json" "${args[@]}" >> "$GITHUB_STEP_SUMMARY"
+          test "$OK" = true && test "$PUBLISHED" = success
