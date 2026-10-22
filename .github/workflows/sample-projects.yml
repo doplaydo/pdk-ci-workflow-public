@@ -1,0 +1,106 @@
+name: Sample Projects
+
+on:
+  workflow_call:
+    inputs:
+      pdk_source:
+        description: editable or released PDK installation.
+        required: true
+        type: string
+      gfp_version:
+        required: false
+        type: string
+        default: ''
+      script_ref:
+        required: false
+        type: string
+        default: 'main'
+    secrets:
+      GFP_API_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    name: Discover sample projects
+    runs-on: ubuntu-latest
+    outputs:
+      projects: ${{ steps.find.outputs.projects }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
+      - name: Download CI helper
+        env:
+          SCRIPT_REF: ${{ inputs.script_ref }}
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/$SCRIPT_REF/scripts/sample_project_ci.py" \
+            -o "$RUNNER_TEMP/sample_project_ci.py"
+      - id: find
+        name: List sample projects
+        run: |
+          projects=$(uv run --no-project --with tomlkit python "$RUNNER_TEMP/sample_project_ci.py" discover)
+          echo "projects=$projects" >> "$GITHUB_OUTPUT"
+
+  package:
+    name: Package ${{ matrix.project.project_dir }}
+    needs: discover
+    if: needs.discover.outputs.projects != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ fromJSON(needs.discover.outputs.projects) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
+      - name: Download CI helper
+        env:
+          SCRIPT_REF: ${{ inputs.script_ref }}
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/$SCRIPT_REF/scripts/sample_project_ci.py" \
+            -o "$RUNNER_TEMP/sample_project_ci.py"
+      - name: Package committed project
+        env:
+          PROJECT_DIR: ${{ matrix.project.project_dir }}
+        run: |
+          uv run --no-project --with tomlkit python "$RUNNER_TEMP/sample_project_ci.py" package "$PROJECT_DIR" \
+            --out "$RUNNER_TEMP/package" --source-repo "$GITHUB_REPOSITORY" --source-sha "$GITHUB_SHA"
+      - name: Upload package artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sample-project-${{ matrix.project.slug }}
+          path: |
+            ${{ runner.temp }}/package/sample-project.zip
+            ${{ runner.temp }}/package/meta.json
+          if-no-files-found: error
+          retention-days: 7
+
+  test:
+    needs: [discover, package]
+    # Test the packages that survived even if another project's packaging failed.
+    if: "!cancelled() && needs.discover.result == 'success' && needs.discover.outputs.projects != '[]'"
+    uses: doplaydo/pdk-ci-workflow-public/.github/workflows/sample-project-test.yml@main
+    with:
+      projects: ${{ needs.discover.outputs.projects }}
+      pdk_source: ${{ inputs.pdk_source }}
+      gfp_version: ${{ inputs.gfp_version }}
+      script_ref: ${{ inputs.script_ref }}
+    secrets:
+      GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
+
