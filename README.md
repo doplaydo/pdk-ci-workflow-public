@@ -113,7 +113,8 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 | Workflow | Jobs | Description |
 |----------|------|-------------|
 | `test_code.yml` | wheel-contents, pre-commit, test_code, test_gfp, test_gfp_no_dev | Wheel reference-file exclusion, pre-commit (canonical config), pytest, GFP validation |
-| `test-sample-projects.yml` | discover, test, notebooks | Unit tests and notebook execution for all `*--sample-projects/` directories |
+| `sample-projects.yml` | discover, package, test | PDK entry point: packages committed ZIPs and calls the shared suite; no upload |
+| `sample-project-test.yml` | test | One shared suite in editable or released mode, with one `Test <project_dir>` job per project |
 | `pages.yml` | build-docs | Sphinx docs build and Pages artifact upload. The caller's wrapper supplies the `deploy-docs` job that publishes to GitHub Pages |
 | `claude-pr-review.yml` | review | AI code review via Claude Sonnet 4. Runs once on PR open/reopen; re-run on demand by commenting `/claude-api review` |
 | `drc.yml` | drc | Design Rule Check with GFP and badge generation |
@@ -123,9 +124,45 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 | `model_coverage.yml` | model-coverage | PDK model-to-cell coverage check |
 | `model_regression.yml` | model-regression | Model regression tests, JAX audit, and metadata audit with opt-in enforcement |
 | `update_badges.yml` | badges | Generate coverage, model, issue, and PR badges |
-| `sample-project-upload.yml` | discover, test, upload | Tests each `*--sample-projects/` directory against the published PDK and uploads a zip of it to the GDSFactory+ portal |
 
 PDK repos call these workflows from thin wrapper files in `.github/workflows/`, passing secrets explicitly. See `templates/.github/workflows/` for ready-to-copy wrappers.
+
+### Sample-project CI
+
+Two thin callers use the same suite: **Sample projects · editable PDK** runs
+on PRs, pushes to `main`, and dispatch; **Sample projects · released PDK** runs
+on sample-directory changes on `main` and dispatch. Editable mode replaces the
+PDK source with the checkout and feeds the release health gate. Released mode
+uses the package index without adding or ignoring source overrides: a committed
+path source can fail just as it would for a downloader. It is a separate red
+check on failure, not a merge gate. Both modes run the `sample_drc_errors`
+DRC smoke test when a fixture is present. In both modes, non-success DRC
+outcomes emit project/step warnings and appear with `(not blocking)` in the
+summary. DRC never fails the job or withholds passed-test evidence: a sample
+that passes all non-DRC checks on the released PDK is eligible for upload.
+
+Packages are committed `git archive` ZIPs, tested after extraction outside the
+checkout. The portal receives those exact ZIP bytes: nothing is stripped,
+including committed `build/`. Each project has its own job and checks/exclusions
+summary; only passing projects publish passed-test evidence. See
+[the workflow contract](.github/workflows/README.md#sample-project-contract)
+for inputs, artifacts, exclusions, and upload safety.
+
+Public callers test only: they have no upload job or admin upload secrets.
+Eligible passed released-mode artifacts are uploaded by a separate private
+central service whose maintainers review the source-repo/portal-PDK allowlist.
+No mirror token is needed. That service uploads the exact tested ZIP;
+its optional downstream mirror separately omits top-level `build/`.
+
+**Migration:** `check-template-drift` conditionally creates
+`sample-projects-editable.yml` and `sample-projects-released.yml` when a root
+`*--sample-projects/` directory exists, and deletes the deprecated callers
+`sample-projects.yml` and `sample-project-upload.yml`. The maintainer must
+re-sync every PDK repo immediately after this change merges: old callers fail
+with “workflow not found” until re-synced. Sample PDK dependencies should pin
+with `==` or `~=`; merging the release bump PR updates those pins and triggers
+released CI. Until that merge, the portal retains the previous sample version;
+unpinned samples are not re-uploaded on release unless their folder changes.
 
 ### Wheel reference-file exclusion
 
@@ -165,8 +202,7 @@ PDK repos must have these secrets configured and forwarded explicitly in their w
 
 | Secret | Used by |
 |--------|---------|
-| `GFP_API_KEY` | test_code, test-sample-projects, pages, drc, test_coverage, model_coverage, model_regression, update_badges, sample-project-upload |
-| `GSP_SYNC_TOKEN` | sample-project-upload — optional; fine-grained PAT with contents + pull-requests write on doplaydo/gfp-sample-projects only; unset skips the gfp-sample-projects sync with a notice |
+| `GFP_API_KEY` | test_code, sample-projects, sample-project-test (optional for the suite), pages, drc, test_coverage, model_coverage, model_regression, update_badges; public sample workflows test only, without portal upload credentials |
 | `ANTHROPIC_API_KEY` | claude-pr-review |
 | `SIMCLOUD_APIKEY` | pages |
 | `GITHUB_TOKEN` | issue, update_badges (automatic) |
@@ -219,7 +255,7 @@ See [`hooks/README.md`](hooks/README.md) for detailed documentation.
 | `check-makefile-targets` | Required targets (install, test) and recommended targets (docs, build, test-force, update-pre, dev). Auto-fix: rewrites `dev` target's stale pre-commit-config fetch to `curl` against the public repo (exit 1; re-run exits 0) |
 | `check-workflows` | `.github/workflows/` has test_code.yml with pre-commit and test jobs |
 | `check-precommit-config` | `.pre-commit-config.yaml` includes required hooks (trailing-whitespace, end-of-file-fixer, ruff or ruff-lint, ruff-format, pydocstyle) |
-| `check-template-drift` | `.github/dependabot.yml` and `.github/workflows/*.yml` thin callers match upstream templates. Auto-fixes by rewriting or creating files. Conditionally deploys `sample-projects.yml` and `sample-project-upload.yml` in repos containing `*--sample-projects/` directories. Deletes deprecated templates (listed in `DEPRECATED_TEMPLATES`) if still present. |
+| `check-template-drift` | `.github/dependabot.yml` and `.github/workflows/*.yml` thin callers match upstream templates. Auto-fixes by rewriting or creating files. Conditionally deploys `sample-projects-editable.yml` and `sample-projects-released.yml` in repos containing `*--sample-projects/` directories. Deletes deprecated templates (listed in `DEPRECATED_TEMPLATES`) if still present. |
 
 #### Multi-band
 
@@ -229,7 +265,7 @@ See [`hooks/README.md`](hooks/README.md) for detailed documentation.
 
 ## Templates
 
-Reference configuration files are provided in `templates/` for onboarding new PDK repos. Copy these files into your repo as-is — they use `@main` and `secrets: inherit`, no modification needed.
+Reference configuration files are provided in `templates/` for onboarding new PDK repos. Copy these files into your repo as-is — they use `@main` and forward secrets explicitly, no inline CI logic needed.
 
 ### Template Files
 
@@ -237,7 +273,7 @@ Reference configuration files are provided in `templates/` for onboarding new PD
 |----------|---------|
 | `.pre-commit-config.yaml` | Canonical pre-commit config (PDK hooks + third-party tools with centralized versions) |
 | `.github/workflows/test_code.yml` | Pre-commit, pytest, and GFP validation |
-| `.github/workflows/sample-projects.yml` | Unit tests, notebooks, and DRC for `*--sample-projects/` directories (auto-deployed by `check-template-drift` when sample dirs are present) |
+| `.github/workflows/sample-projects-editable.yml` | Shared sample suite against the editable PDK on PRs, pushes to `main`, and dispatch; conditionally deployed when `*--sample-projects/` exists |
 | `.github/workflows/pages.yml` | Sphinx docs build and GitHub Pages deployment |
 | `.github/workflows/claude-pr-review.yml` | AI code review via Claude — runs once on PR open/reopen; re-run on demand with `/claude-api review` comment |
 | `.github/workflows/drc.yml` | Design Rule Check via GFP |
@@ -246,7 +282,7 @@ Reference configuration files are provided in `templates/` for onboarding new PD
 | `.github/workflows/test_coverage.yml` | Pytest with line coverage reporting |
 | `.github/workflows/model_coverage.yml` | PDK model-to-cell coverage check |
 | `.github/workflows/model_regression.yml` | Model-specific regression tests |
-| `.github/workflows/sample-project-upload.yml` | Test each `*--sample-projects/` directory against the published PDK and upload it to the GDSFactory+ portal on manual dispatch or pushes to `main` that touch sample projects (auto-deployed by `check-template-drift` when sample dirs are present) |
+| `.github/workflows/sample-projects-released.yml` | Shared sample suite against the released PDK on sample changes on `main` or dispatch; no portal upload in this repo; conditionally deployed |
 | `.github/workflows/update_badges.yml` | Generate coverage, model, issue, and PR badges |
 | `.github/workflows/code-security.yml` | SAST (Semgrep) and SCA (Trivy) security scans |
 | `.github/dependabot.yml` | Monthly pip and github-actions dependency updates |
@@ -284,7 +320,7 @@ PDK repositories consuming these workflows need:
 ### GitHub Secrets
 
 For PDK repositories (passed explicitly in each wrapper workflow):
-- `GFP_API_KEY` - GDSFactory Platform validation and package-index configuration (test_code, pages, drc, test_coverage, model_coverage, model_regression, update_badges)
+- `GFP_API_KEY` - GDSFactory Platform validation and package-index configuration (test_code, sample-projects, sample-project-test, pages, drc, test_coverage, model_coverage, model_regression, update_badges)
 - `ANTHROPIC_API_KEY` - Claude code reviews (claude-pr-review)
 - `SIMCLOUD_APIKEY` - Simulation cloud access (pages)
 
@@ -316,7 +352,7 @@ Enable GitHub Pages in your repository settings:
 ### Adding a New Template
 
 1. Create the template file in `templates/` mirroring the target path
-2. Use `@main` to reference pdk-ci-workflow and `secrets: inherit` to pass secrets
+2. Use `@main` to reference the upstream reusable workflow and forward only its declared secrets explicitly
 
 ### Versioning
 
