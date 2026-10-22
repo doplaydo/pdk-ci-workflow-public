@@ -17,9 +17,41 @@ import fnmatch
 import importlib.util
 import inspect
 import sys
+import tomllib
+from importlib import import_module
 from pathlib import Path
 
-from gdsfactoryplus.core.pdk import get_pdk, register_cells
+
+# TODO: replace with `from gdsfactoryplus import get_pdk` once a gdsfactoryplus
+# release newer than 2.2.485 that exports the project-aware top-level
+# get_pdk() is on PyPI. 2.x removed gdsfactoryplus.core.pdk, so this local
+# copy keeps the script working on both 1.x and 2.x locks until then.
+def get_pdk():
+    """Activate and return the PDK configured by the nearest pyproject.toml.
+
+    Reads ``[tool.gdsfactoryplus.pdk] name``, falling back to
+    ``[tool.gdsfactoryplus] name``, and imports ``<name>.PDK``.
+    """
+    cwd = Path.cwd()
+    for directory in (cwd, *cwd.parents):
+        pyproject = directory / "pyproject.toml"
+        if pyproject.is_file():
+            break
+    else:
+        sys.exit(f"Error: no pyproject.toml found at or above {cwd}")
+
+    config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    gfp_config = config.get("tool", {}).get("gdsfactoryplus", {})
+    name = gfp_config.get("pdk", {}).get("name") or gfp_config.get("name")
+    if not name:
+        sys.exit(
+            f"Error: no [tool.gdsfactoryplus.pdk] name or [tool.gdsfactoryplus] name in {pyproject}"
+        )
+
+    pdk = import_module(name).PDK
+    pdk.activate()
+    return pdk
+
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("cell_name", help="Cell to build, or 'all_cells'")
@@ -29,7 +61,6 @@ args = parser.parse_args()
 cell_name = args.cell_name
 skip_cells = set(args.skip)
 Path("build/gds").mkdir(parents=True, exist_ok=True)
-register_cells()
 pdk = get_pdk()
 
 if cell_name == "all_cells":

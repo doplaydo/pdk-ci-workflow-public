@@ -38,8 +38,9 @@ class TestCheckTemplateDrift:
     def test_matching_template_passes(self, pdk_root: Path) -> None:
         """If local file matches the template exactly, hook passes."""
         from importlib.resources import files
-        from hooks.check_template_drift import TEMPLATES
+
         from hooks._utils import apply_sync_markers
+        from hooks.check_template_drift import TEMPLATES
 
         root = files("templates")
 
@@ -66,8 +67,9 @@ class TestCheckTemplateDrift:
     def test_drifted_file_gets_rewritten(self, pdk_root: Path) -> None:
         """A drifted file should be rewritten and hook should return 1."""
         from importlib.resources import files
-        from hooks.check_template_drift import TEMPLATES
+
         from hooks._utils import apply_sync_markers
+        from hooks.check_template_drift import TEMPLATES
 
         root = files("templates")
 
@@ -99,10 +101,7 @@ class TestCheckTemplateDrift:
 
     def test_second_run_after_rewrite_passes(self, pdk_root: Path) -> None:
         """After rewriting, a second run should pass (Ruff-style auto-fix)."""
-        from importlib.resources import files
         from hooks.check_template_drift import TEMPLATES
-
-        root = files("templates")
 
         # To ensure the second run passes, we must handle ALL templates
         for rel in TEMPLATES:
@@ -250,6 +249,7 @@ class TestSyncMarkerStripping:
     def test_markers_stripped_from_enforced_content(self, pdk_root: Path) -> None:
         """Downstream PDK repos never see literal SYNC-PRIVATE/SYNC-PUBLIC marker text."""
         from importlib.resources import files
+
         from hooks.check_template_drift import TEMPLATES, main
 
         root = files("templates")
@@ -274,16 +274,45 @@ class TestSyncMarkerStripping:
                 assert "SYNC-PUBLIC:" not in local.read_text()
 
 
-class TestSampleProjectUploadTemplate:
-    REL = ".github/workflows/sample-project-upload.yml"
+class TestSampleProjectsReleasedTemplate:
+    REL = ".github/workflows/sample-projects-released.yml"
 
     def test_enforced_when_sample_projects_dir_exists(self, pdk_root: Path) -> None:
         (pdk_root / "my-pdk--sample-projects").mkdir()
         main()
         text = (pdk_root / self.REL).read_text()
-        assert "sample-project-upload.yml@main" in text
+        assert "sample-projects.yml@main" in text
         assert "SYNC-PRIVATE:" not in text
 
     def test_not_enforced_without_sample_projects_dir(self, pdk_root: Path) -> None:
         main()
         assert not (pdk_root / self.REL).exists()
+
+
+def test_conditional_templates_are_new_sample_project_callers(pdk_root: Path) -> None:
+    from hooks.check_template_drift import CONDITIONAL_TEMPLATES
+
+    expected = {
+        ".github/workflows/sample-projects-editable.yml",
+        ".github/workflows/sample-projects-released.yml",
+    }
+    assert {path for path, _ in CONDITIONAL_TEMPLATES} == expected
+    (pdk_root / "examplepdk--sample-projects").mkdir()
+    assert main() == 1
+    for path in expected:
+        assert "sample-projects.yml@main" in (pdk_root / path).read_text()
+    assert main() == 0
+
+
+def test_old_sample_project_callers_are_deprecated(pdk_root: Path) -> None:
+    from hooks.check_template_drift import DEPRECATED_TEMPLATES
+
+    for name in ("sample-projects.yml", "sample-project-upload.yml"):
+        rel = f".github/workflows/{name}"
+        assert rel in DEPRECATED_TEMPLATES
+        path = pdk_root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# stale caller\n")
+    assert main() == 1
+    for name in ("sample-projects.yml", "sample-project-upload.yml"):
+        assert not (pdk_root / ".github/workflows" / name).exists()

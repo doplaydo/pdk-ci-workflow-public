@@ -33,7 +33,7 @@ Each hook is a self-contained Python script that validates some aspect of a PDK 
 | `check-makefile-targets` | `check_makefile_targets.py` | Required targets: install, test. Recommended: docs, build, test-force, update-pre, dev. Content checks: uv sync in install, pytest in test. Auto-fix: rewrites `dev` target's stale pre-commit-config fetch to `curl` against the public repo (exit 1; re-run exits 0) |
 | `check-workflows` | `check_workflows.py` | `.github/workflows/` has test_code.yml (or test.yml) with pre-commit job and test job |
 | `check-precommit-config` | `check_precommit_config.py` | `.pre-commit-config.yaml` includes required hooks (end-of-file-fixer, trailing-whitespace, ruff or ruff-lint, ruff-format, pydocstyle) and recommended hooks (nbstripout, codespell) |
-| `check-template-drift` | `check_template_drift.py` | Enforces `.github/dependabot.yml` and `.github/workflows/*.yml` thin callers match upstream `templates/`. Ruff-style auto-fix: missing or drifted files are rewritten from the canonical template, exit 1; re-run exits 0. Conditionally enforces `sample-projects.yml` and `sample-project-upload.yml` only in repos containing a `*--sample-projects/` directory. Deletes deprecated templates (listed in `DEPRECATED_TEMPLATES`) if still present. No-ops inside pdk-ci-workflow itself. |
+| `check-template-drift` | `check_template_drift.py` | Enforces `.github/dependabot.yml` and `.github/workflows/*.yml` thin callers match upstream `templates/`. Ruff-style auto-fix: missing or drifted files are rewritten from the canonical template, exit 1; re-run exits 0. Conditionally enforces `sample-projects-editable.yml` and `sample-projects-released.yml` only in repos containing a `*--sample-projects/` directory. Deletes deprecated templates (listed in `DEPRECATED_TEMPLATES`) if still present. No-ops inside pdk-ci-workflow itself. |
 | `check-hook-freshness` | `check_hook_freshness.py` | Detects a stale local pre-commit cache: compares the commit the installed hook checkout was cloned from (via the `.git` directory pre-commit leaves alongside the installed venv) against the current tip of this hook repo's `main`, and fails with instructions to run `pre-commit clean` if they differ. Warns instead of failing when offline or the check can't be determined. No-ops inside pdk-ci-workflow itself. |
 | `check-uv-lock-tracked` | `check_uv_lock_tracked.py` | For repos that use uv (Makefile `install` target invokes `uv`, `[tool.uv]` in pyproject.toml, or `uv.lock` already present), `uv.lock` exists and is tracked by git (not gitignored, not simply un-added). Fails if missing, or present but untracked. No-ops for non-uv repos and inside pdk-ci-workflow itself. |
 | `check-uv-lock-sync` | `check_uv_lock_sync.py` | Runs `uv lock --check` to verify `uv.lock` still matches `pyproject.toml`. Catches dependency edits committed without re-running `uv lock` — `uv sync` re-locks silently, so the drift otherwise surfaces only when an unrelated PR regenerates the lock. Warns instead of failing when uv can't be run. No-ops when `uv.lock` is absent and inside pdk-ci-workflow itself. |
@@ -43,6 +43,28 @@ Each hook is a self-contained Python script that validates some aspect of a PDK 
 | Hook ID | Source | What it checks |
 |---------|--------|---------------|
 | `check-multi-band` | `check_multi_band.py` | For multi-band PDKs (2+ band directories): consistent module sets per band (cells, tech, models), corresponding test files, shared layers at package root. Silently passes for single-band PDKs. |
+
+## Sample-project template migration
+
+`CONDITIONAL_TEMPLATES` in `check_template_drift.py` deploys
+`.github/workflows/sample-projects-editable.yml` and
+`.github/workflows/sample-projects-released.yml` when a root `*--sample-projects`
+directory exists. It does not deploy them into repos without sample directories.
+`DEPRECATED_TEMPLATES` removes the old `sample-projects.yml` and
+`sample-project-upload.yml` callers even if sample directories are absent.
+Creation, rewriting, or deletion exits 1; a second clean run exits 0.
+
+The maintainer must re-sync every PDK repo immediately after merge because
+old callers reference deleted reusable workflows and fail with “workflow not
+found” until refreshed. Do not inline CI into callers to work around this.
+The editable caller retains job id `test-sample-projects` without `name:` so
+the release gate sees `test-sample-projects / test / Test <dir>`; released uses
+job id `released` and a separate, non-merge-blocking check.
+
+The public package ships resolved public callers: both forward only the API
+key, neither enables upload or forwards a mirror token. The private central
+service handles eligible public artifacts without giving public jobs its
+admin key. Local caller customizations are overwritten, not preserved.
 
 ## Shared Utilities (`_utils.py`)
 
