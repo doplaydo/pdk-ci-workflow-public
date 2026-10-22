@@ -1,26 +1,8 @@
-"""Zip a sample project and upload it to the GDSFactory+ portal.
+"""Upload a tested sample-project ZIP unchanged to the GDSFactory+ portal.
 
-Run from the PDK repo root against a pristine snapshot of one
-``{pdk_package}--sample-projects/{template}--project/`` directory. The
-portal row key is resolved from the portal's own catalog, not from per-repo
-config:
-
-- ``pdk_import_name``: ``tool.gdsfactoryplus.pdk.name`` in the sample
-  project's pyproject.
-- ``pdk_name``: the catalog record whose ``package_names`` contains the PDK
-  distribution the sample project depends on.
-- ``version``: ``--version`` when given (the release being published),
-  otherwise the sample project's exact (``==``) pin on its PDK distribution,
-  otherwise ``--installed-version``. It must match ``--installed-version``
-  (what the project was actually tested against).
-
-Refuses to upload when another sample project in the repo resolves to the
-same ``(pdk_name, pdk_import_name)``, since the two would overwrite each
-other. The upload always overwrites; nothing is read back from the portal
-first.
-
-``distribution PROJECT_DIR`` prints the PDK distribution a sample project
-depends on, so the workflow can read its installed version.
+Resolve the portal key from its catalog and the archived pyproject. Use the
+exact PDK pin, else the installed version; refuse untested versions, disallowed
+portal names, and keys shared by sibling projects in --repo-root.
 """
 
 from __future__ import annotations
@@ -28,12 +10,18 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import io
+import json
 import os
 import re
+import subprocess
 import sys
-import tomllib
 import zipfile
 from pathlib import Path
+
+import tomllib
+
+sys.path.insert(0, str(Path(__file__).parent))
+from sample_project_ci import pdk_distribution
 
 BASE_URL = "https://api.gdsfactory.com"
 
@@ -54,20 +42,6 @@ def _normalize(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def build_zip(root: Path) -> bytes:
-    """Zip every file under ``root``, with paths relative to ``root``.
-
-    From compat.archive.build_zip, minus its inode-seeded timestamps (only
-    needed there to tell archives apart in its own tests).
-    """
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(root.rglob("*")):
-            if path.is_file():
-                zf.write(path, arcname=path.relative_to(root).as_posix())
-    return buffer.getvalue()
-
-
 def read_pdk_import_name(pyproject_text: str) -> str:
     """Return ``tool.gdsfactoryplus.pdk.name`` (from compat.portal_keys.read_pdk_import_name).
 
@@ -79,20 +53,6 @@ def read_pdk_import_name(pyproject_text: str) -> str:
     if not name:
         raise LookupError("no tool.gdsfactoryplus.pdk.name in pyproject.toml")
     return name
-
-
-def find_pdk_distribution(pyproject_text: str, root_name: str) -> str:
-    """Return the dependency naming the PDK repo's own package or a variant of it.
-
-    Same matching test-sample-projects.yml uses to find a variant: the
-    dependency is ``root_name`` itself or ``root_name-<variant>``.
-    """
-    root = _normalize(root_name)
-    for requirement in tomllib.loads(pyproject_text).get("project", {}).get("dependencies", []):
-        name = _normalize(re.split(r"[\[~><=!;@\s]", requirement.strip())[0])
-        if name == root or name.startswith(root + "-"):
-            return name
-    raise LookupError(f"no dependency on {root_name!r} (or a variant of it) in pyproject.toml")
 
 
 def versions_match(target: str, installed: str) -> bool:
@@ -110,13 +70,13 @@ def versions_match(target: str, installed: str) -> bool:
     return release(target) == release(installed)
 
 
-def upload_version(release_version: str, exact_pin: str | None, installed: str) -> str:
-    """Return the version to upload at: the release, else the exact pin, else what was installed.
+def upload_version(exact_pin: str | None, installed: str) -> str:
+    """Return the version to upload at: the exact pin, else what was installed.
 
     Raises ``ValueError`` unless it names the version that was installed, so
     content is never labelled with a version it wasn't tested against.
     """
-    target = release_version or exact_pin or installed
+    target = exact_pin or installed
     if not installed or not versions_match(target, installed):
         raise ValueError(f"tested against {installed or '(unknown)'}, not {target}")
     return target
@@ -151,14 +111,18 @@ def parse_exact_pin(pyproject_text: str, distribution: str) -> str | None:
         re.IGNORECASE,
     )
     target = _normalize(distribution)
-    for requirement in tomllib.loads(pyproject_text).get("project", {}).get("dependencies", []):
+    for requirement in (
+        tomllib.loads(pyproject_text).get("project", {}).get("dependencies", [])
+    ):
         match = pattern.match(requirement.strip())
         if match and _normalize(match.group("name")) == target:
             return match.group("version")
     return None
 
 
-def resolve_pdk_name(catalog: list[PdkRecord], pdk_import_name: str, distribution: str) -> str:
+def resolve_pdk_name(
+    catalog: list[PdkRecord], pdk_import_name: str, distribution: str
+) -> str:
     """Return the portal catalog ``name`` for a sample project.
 
     Adapted from compat.portal_keys.resolve_pdk_id: same matching, returns
@@ -206,14 +170,20 @@ def list_pdks(api_key: str) -> list[PdkRecord]:
     ]
 
 
-def upload(api_key: str, pdk_name: str, pdk_import_name: str, version: str, archive: bytes) -> str:
+def upload(
+    api_key: str, pdk_name: str, pdk_import_name: str, version: str, archive: bytes
+) -> str:
     """Upload one archive (from compat.portal_client.PortalClient.upload); return the response body."""
     import httpx
 
     response = httpx.post(
         f"{BASE_URL}/api/admin/sdk/v1/pdks/sample-projects/upload",
         headers={"x-api-key": api_key},
-        data={"pdk_name": pdk_name, "pdk_import_name": pdk_import_name, "version": version},
+        data={
+            "pdk_name": pdk_name,
+            "pdk_import_name": pdk_import_name,
+            "version": version,
+        },
         files={"file": ("archive.zip", archive, "application/zip")},
         timeout=120.0,
     )
@@ -229,69 +199,202 @@ def _sample_project_dirs(repo_root: Path) -> list[str]:
     )
 
 
-def _portal_key(catalog: list[PdkRecord], pyproject_text: str, root_name: str) -> tuple[str, str]:
-    distribution = find_pdk_distribution(pyproject_text, root_name)
+def _portal_key(
+    catalog: list[PdkRecord], pyproject_text: str, root_name: str
+) -> tuple[str, str]:
+    distribution = pdk_distribution(pyproject_text, root_name)
     pdk_import_name = read_pdk_import_name(pyproject_text)
     return resolve_pdk_name(catalog, pdk_import_name, distribution), pdk_import_name
+
+
+def _refuse(message: str) -> None:
+    print(f"::error::{message}")
+    raise SystemExit(1)
+
+
+def _gh(endpoint: str, *, pages: bool = False) -> bytes:
+    command = ["gh", "api", endpoint]
+    if pages:
+        command += ["--paginate", "--slurp"]
+    return subprocess.run(command, check=True, capture_output=True).stdout
+
+
+def _items(endpoint: str, key: str) -> list[dict]:
+    return [
+        item for page in json.loads(_gh(endpoint, pages=True)) for item in page[key]
+    ]
+
+
+def superseding_run(meta: dict, source_run_id: int) -> int | None:
+    """Find newer own-main released evidence for this project, not overall run success.
+
+    Called immediately before POST while the workflow holds its project lock.
+    A passed artifact can exist while other projects (or uploads) are still running.
+    No artifact or source code is extracted or executed. API/invalid-evidence
+    errors fail closed; expired evidence cannot establish supersession.
+    """
+    repo, slug = meta["source_repo"], meta["slug"]
+    runs = _items(
+        f"repos/{repo}/actions/workflows/sample-projects-released.yml/runs?branch=main&per_page=100",
+        "workflow_runs",
+    )
+    for run in sorted(runs, key=lambda item: item["id"], reverse=True):
+        if (
+            run["id"] <= source_run_id
+            or run.get("event") not in {"push", "workflow_dispatch"}
+            or run.get("head_branch") != "main"
+            or (run.get("head_repository") or {}).get("full_name") != repo
+        ):
+            continue
+        artifacts = _items(
+            f"repos/{repo}/actions/runs/{run['id']}/artifacts?per_page=100", "artifacts"
+        )
+        passed_name = f"sample-project-tested-released-{slug}"
+        for artifact in artifacts:
+            if artifact["name"] != passed_name or artifact.get("expired"):
+                continue
+            try:
+                archive = _gh(f"repos/{repo}/actions/artifacts/{artifact['id']}/zip")
+            except subprocess.CalledProcessError as error:
+                if b"410" not in (error.stderr or b""):
+                    raise
+                continue
+            with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+                passed = json.loads(zf.read("meta.json"))
+                version = zf.read("installed-version.txt").decode().strip()
+            if (
+                passed.get("source_repo") != repo
+                or passed.get("source_sha") != run.get("head_sha")
+                or not passed.get("source_sha")
+                or passed.get("project_dir") != meta["project_dir"]
+                or passed.get("slug") != slug
+                or not passed.get("tree_sha")
+                or not version
+            ):
+                raise ValueError(
+                    f"invalid tested metadata for {repo}/{slug} in run {run['id']}"
+                )
+            return run["id"]
+    return None
+
+
+def _upload_output(uploaded: bool) -> None:
+    if output := os.environ.get("GITHUB_OUTPUT"):
+        with open(output, "a") as stream:
+            print(f"uploaded={str(uploaded).lower()}", file=stream)
 
 
 def _upload(args: argparse.Namespace) -> None:
     api_key = os.environ.get("GFP_API_KEY", "")
     if not api_key:
-        sys.exit("GFP_API_KEY is not set")
+        _refuse("GFP_API_KEY is not set")
 
-    root_name = tomllib.loads(Path("pyproject.toml").read_text())["project"]["name"]
-    sample_pyproject = (args.snapshot / "pyproject.toml").read_text()
-    distribution = find_pdk_distribution(sample_pyproject, root_name)
+    meta = json.loads(args.meta.read_text())
+    project_dir = meta["project_dir"]
+    root_name = tomllib.loads((args.repo_root / "pyproject.toml").read_text())[
+        "project"
+    ]["name"]
+    archive = args.archive.read_bytes()
+    with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+        sample_pyproject = zf.read("pyproject.toml").decode("utf-8")
+    distribution = pdk_distribution(sample_pyproject, root_name)
     try:
         version = upload_version(
-            args.version, parse_exact_pin(sample_pyproject, distribution), args.installed_version
+            parse_exact_pin(sample_pyproject, distribution), args.installed_version
         )
     except ValueError as e:
-        sys.exit(f"{args.project_dir}: {distribution} {e} - refusing to upload")
+        _refuse(f"{project_dir}: {distribution} {e} - refusing to upload")
 
     catalog = list_pdks(api_key)
     pdk_name, pdk_import_name = _portal_key(catalog, sample_pyproject, root_name)
-    keys = {args.project_dir: (pdk_name, pdk_import_name)}
-    for other in _sample_project_dirs(Path(".")):
-        if other == args.project_dir:
+    if args.allowed_pdk_names is not None:
+        allowed = {
+            name.strip() for name in args.allowed_pdk_names.split(",") if name.strip()
+        }
+        if pdk_name not in allowed:
+            _refuse(
+                f"{project_dir}: pdk_name={pdk_name} is not in allowed PDK names {args.allowed_pdk_names}"
+            )
+
+    keys = {project_dir: (pdk_name, pdk_import_name)}
+    for other in _sample_project_dirs(args.repo_root):
+        if other == project_dir:
             continue
         try:
-            keys[other] = _portal_key(catalog, Path(other, "pyproject.toml").read_text(), root_name)
+            keys[other] = _portal_key(
+                catalog,
+                (args.repo_root / other / "pyproject.toml").read_text(),
+                root_name,
+            )
         except LookupError:
             continue  # cannot resolve, so cannot upload either: no collision
-    if args.project_dir in find_collisions(keys):
-        clashing = sorted(d for d, k in keys.items() if k == keys[args.project_dir])
-        sys.exit(
+    if project_dir in find_collisions(keys):
+        clashing = sorted(d for d, k in keys.items() if k == keys[project_dir])
+        _refuse(
             f"{clashing} all resolve to pdk_name={pdk_name} pdk_import_name={pdk_import_name}; "
             "they would overwrite each other's archive - give each a distinct tool.gdsfactoryplus.pdk.name"
         )
 
-    archive = build_zip(args.snapshot)
     print(
-        f"Uploading {args.project_dir} ({len(archive)} bytes) as "
-        f"pdk_name={pdk_name} pdk_import_name={pdk_import_name} version={version}"
+        f"{'[dry-run] Would upload' if args.dry_run else 'Uploading'} {project_dir} ({len(archive)} bytes) as "
+        f"pdk_name={pdk_name} pdk_import_name={pdk_import_name} version={version}; "
+        f"allowed_pdk_names={args.allowed_pdk_names or '(unrestricted)'}; collisions=none"
     )
-    print(upload(api_key, pdk_name, pdk_import_name, version, archive))
+    if not args.allow_stale:
+        newer = superseding_run(meta, args.source_run_id)
+        if newer is not None:
+            print(
+                f"::notice::{project_dir}: skipping stale upload; superseded by passed released-mode "
+                f"run https://github.com/{meta['source_repo']}/actions/runs/{newer}"
+            )
+            _upload_output(False)
+            return
+    if not args.dry_run:
+        print(upload(api_key, pdk_name, pdk_import_name, version, archive))
+        _upload_output(True)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = parser.add_subparsers(dest="command", required=True)
-    dist = sub.add_parser("distribution", help="Print the PDK distribution a sample project depends on")
-    dist.add_argument("project_dir", type=Path)
-    up = sub.add_parser("upload", help="Zip a sample-project snapshot and upload it (run from the PDK repo root)")
-    up.add_argument("snapshot", type=Path, help="Pristine snapshot of the sample project to zip")
-    up.add_argument("--project-dir", required=True, help="The sample project's path in the repo")
-    up.add_argument("--version", default="", help="Version to upload at; default: exact PDK pin, else installed")
-    up.add_argument("--installed-version", default="", help="PDK version the project was tested against")
-    args = parser.parse_args()
-
-    if args.command == "distribution":
-        root_name = tomllib.loads(Path("pyproject.toml").read_text())["project"]["name"]
-        print(find_pdk_distribution((args.project_dir / "pyproject.toml").read_text(), root_name))
-    else:
-        _upload(args)
+    up = sub.add_parser("upload", help="Upload a tested sample-project ZIP unchanged")
+    up.add_argument(
+        "--source-run-id",
+        type=int,
+        required=True,
+        help="Run that produced the tested archive",
+    )
+    up.add_argument(
+        "--allow-stale",
+        action="store_true",
+        help="Explicit source_run dispatch only: bypass freshness",
+    )
+    up.add_argument("archive", type=Path, help="Tested sample-project ZIP")
+    up.add_argument("--meta", type=Path, required=True, help="Package metadata JSON")
+    up.add_argument(
+        "--installed-version",
+        required=True,
+        help="PDK version the project was tested against",
+    )
+    up.add_argument(
+        "--repo-root",
+        type=Path,
+        required=True,
+        help="Source checkout used for collision checks",
+    )
+    up.add_argument(
+        "--allowed-pdk-names",
+        default=None,
+        help="Comma-separated allowed portal PDK names; omit for no restriction",
+    )
+    up.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Resolve and print the upload without the POST",
+    )
+    _upload(parser.parse_args())
 
 
 if __name__ == "__main__":

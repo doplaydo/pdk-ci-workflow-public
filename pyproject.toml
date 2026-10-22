@@ -36,6 +36,7 @@ check_workflows = "hooks.check_workflows:main"
 dev = [
     "pytest>=7.0",
     "hypothesis>=6.0",
+    "tomlkit",
 ]
 
 [tool.setuptools.packages.find]

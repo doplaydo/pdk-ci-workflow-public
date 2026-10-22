@@ -19,7 +19,7 @@ import inspect
 import sys
 from pathlib import Path
 
-from gdsfactoryplus.core.pdk import get_pdk, register_cells
+from gdsfactoryplus import get_pdk
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("cell_name", help="Cell to build, or 'all_cells'")
@@ -29,7 +29,6 @@ args = parser.parse_args()
 cell_name = args.cell_name
 skip_cells = set(args.skip)
 Path("build/gds").mkdir(parents=True, exist_ok=True)
-register_cells()
 pdk = get_pdk()
 
 if cell_name == "all_cells":
