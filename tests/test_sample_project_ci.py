@@ -107,6 +107,24 @@ def test_pdk_distribution_absent(ci):
         ci.pdk_distribution('[project]\ndependencies = ["acmeother", "numpy"]', "acme")
 
 
+def test_pdk_distribution_editable_pdk_project_is_its_own_pdk(ci):
+    text = '[project]\nname = "qpdk"\n[tool.gdsfactoryplus]\npdk.name = "qpdk"\n'
+    assert ci.pdk_distribution(text, "qpdk") == "qpdk"
+    with pytest.raises(LookupError):
+        ci.pdk_distribution(text.replace('name = "qpdk"', 'name = "x"', 1), "qpdk")
+    with pytest.raises(LookupError):
+        ci.pdk_distribution(text, "other")
+    with pytest.raises(LookupError):
+        ci.pdk_distribution('[project]\nname = "qpdk"\n', "qpdk")
+
+
+def test_pdk_distribution_editable_pdk_project_import_name_may_differ(ci):
+    text = (
+        '[project]\nname = "ihp-gdsfactory"\n[tool.gdsfactoryplus]\npdk.name = "ihp"\n'
+    )
+    assert ci.pdk_distribution(text, "ihp-gdsfactory") == "ihp-gdsfactory"
+
+
 @pytest.mark.parametrize(
     "root,distribution,expected",
     [
