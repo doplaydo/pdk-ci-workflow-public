@@ -45,7 +45,11 @@ The ZIP is `git archive --format=zip HEAD:<project_dir>`, committed files at
 archive root, with nothing stripped. `meta.json` records `project_dir`, `slug`,
 `pdk_distribution`, `pdk_import_name`, `tree_sha`, `source_repo`, and `source_sha`.
 Packaging reads both root and sample pyprojects from HEAD. The portal ZIP is
-never regenerated from the test working directory.
+never regenerated from the test working directory. An editable PDK sample
+project ships the full PDK source instead of depending on it; when its
+`project.name` is the root PDK (or a variant) and it sets
+`tool.gdsfactoryplus.pdk.name`, that name is its `pdk_distribution`. The
+editable source swap is then a no-op: both modes test the PDK copy inside the sample, not the checkout.
 
 The suite extracts into `$RUNNER_TEMP/project` outside the checkout:
 

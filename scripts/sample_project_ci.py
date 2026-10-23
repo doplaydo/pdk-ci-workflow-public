@@ -41,14 +41,23 @@ def _normalize(name: str) -> str:
 
 
 def pdk_distribution(sample_pyproject: str, root_name: str) -> str:
-    """Resolve the root PDK or its first variant in dependency order."""
+    """Resolve the root PDK or its first variant in dependency order.
+
+    An editable PDK sample project ships the full PDK source instead of
+    depending on it: its own distribution is the root PDK (or a variant).
+    Its import name (``tool.gdsfactoryplus.pdk.name``) may differ, e.g.
+    ``ihp-gdsfactory`` imports as ``ihp``.
+    """
     root = _normalize(root_name)
-    for requirement in (
-        tomllib.loads(sample_pyproject).get("project", {}).get("dependencies", [])
-    ):
+    data = tomllib.loads(sample_pyproject)
+    for requirement in data.get("project", {}).get("dependencies", []):
         name = _normalize(re.split(r"[\[~><=!;@\s]", requirement.strip())[0])
         if name == root or name.startswith(root + "-"):
             return name
+    own = _normalize(data.get("project", {}).get("name", ""))
+    pdk = data.get("tool", {}).get("gdsfactoryplus", {}).get("pdk", {}).get("name")
+    if pdk and (own == root or own.startswith(root + "-")):
+        return own
     raise LookupError(
         f"no dependency on {root_name!r} (or a variant of it) in pyproject.toml"
     )
