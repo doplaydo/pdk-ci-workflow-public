@@ -59,7 +59,13 @@ old callers reference deleted reusable workflows and fail with “workflow not
 found” until refreshed. Do not inline CI into callers to work around this.
 The editable caller retains job id `test-sample-projects` without `name:` so
 the release gate sees `test-sample-projects / test / Test <dir>`; released uses
-job id `released` and a separate, non-merge-blocking check.
+job id `released` and a separate, non-merge-blocking check. Both callers inherit
+Python-cell tests and the single **Build all shipped schematics** step from the
+shared per-project job. Schematic coverage changes require no extra conditional
+template or standalone workflow: update the reusable suite and helper. Failed
+builds, empty geometry, or incomplete schematic results block that project's
+passed-test evidence in either PDK mode. See the
+[suite contract](../.github/workflows/README.md#sample-project-contract).
 
 The public package ships resolved public callers: both forward only the API
 key, neither enables upload or forwards a mirror token. The private central

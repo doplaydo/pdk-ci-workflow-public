@@ -5,6 +5,7 @@ CLI utilities used by reusable workflows at runtime.
 | Script | Used by | Description |
 |--------|---------|-------------|
 | `check_wheel_contents.py` | `test_code.yml`, `release.yml` via `actions/check_wheel_contents` | Inspects every built wheel without extracting or importing it. Fails on reserved reference directories or `.git` metadata anywhere in archive paths, empty builds, unreadable wheels, and Hatch `force-include`, `sources`, `shared-data`, `shared-scripts`, or `extra-metadata` mappings whose source or destination includes those directories. Required runtime assets belong in the PDK package's ordinary runtime directories. Uses Python 3.12 standard-library modules in CI. |
+| `build_schematics.py` | `sample-project-test.yml` (`schematics` step) | Inventories every committed `.gsch` in the package ZIP, builds each through the editor's direct-to-GDS pipeline in an isolated process, checks recursive polygon geometry, and writes per-path results. Independent of Python factory discovery; any failed or unaccounted-for schematic blocks passed-test evidence. |
 | `build_cell.py` | `sample-project-test.yml` (DRC steps) | Builds a named PDK cell and writes it to `build/gds/<cell_name>.gds`. Accepts `all_cells` to pack every default-instantiable PDK cell into one GDS, or a specific cell name with rglob fallback for cells not auto-registered in `pdk.cells`. |
 | `gds_xor_report.py` | `gds-xor.yml` | Pairs up the top cells of two revisions of a GDS file and XORs them layer by layer with KLayout. Writes `xor/<slug>.xor.gds` (XOR shapes kept on their original layer/datatype, beside copies of both inputs), a `report.pdf` with a summary table plus one page per differing layer, `png/` with the same per-layer figures as standalone images, `comment.md` (the summary plus one collapsed image section per layer, each image left as an `IMAGE:<path>` placeholder for the caller to upload and rewrite), and `summary.md` / `summary.json` with the added, removed, and total difference area in um^2. A missing file on either side counts as an empty layout, so added and deleted GDS files are reported too. Needs only `klayout` and `matplotlib`, so the workflow runs it in a throwaway `uv --no-project` env rather than the PDK's. |
 | `sample_project_ci.py` | `sample-projects.yml`, `sample-project-test.yml` | Discovers and packages committed projects, resolves PDK distributions/variants, edits extracted pyprojects, runs notebooks collecting failures, parses skipped tests, and renders checks/exclusions summaries. Uses `tomlkit` for edits. |
@@ -23,6 +24,43 @@ CLI utilities used by reusable workflows at runtime.
 | `edit-pyproject <path> [--editable-source DIST=PATH] [--gfp-version V]` | Replaces the distribution's uv source with an editable path and/or adds a gdsfactoryplus constraint; only edits the extracted test copy |
 | `run-notebooks <project_root> [--out <report.json>]` | Attempts every selected notebook, collects failures, returns nonzero if any failed; default report is `$RUNNER_TEMP/notebooks.json`, falling back to system temp, never the project directory |
 | `summary --checks '<JSON object>' [--notebooks <report.json>] [--exclusions <list.json> ...]` | Renders a checks/results/notes table and all exclusions; notebook reports and exclusion string lists have distinct formats |
+
+The schematic helper runs in the extracted project's installed environment,
+not a throwaway helper environment:
+
+```bash
+uv run --no-sync python /path/to/build_schematics.py \
+  --archive /path/to/sample-project.zip --pdk examplepdk \
+  --out /path/to/schematics.json
+```
+
+The current directory is the extracted project (`--project` can override it).
+`--pdk` is the package metadata's `pdk_import_name`; an undotted module name is
+resolved as `<module>.PDK`, while a dotted qualified name is passed unchanged.
+The SDK must provide `gdsfactoryplus.compile.build_nyancir_gds`, the same
+nyancir → DSchematic → GDS pipeline used by the editor. An unavailable pipeline
+is a build failure, not a reason to skip schematics.
+
+The ZIP inventory includes all `.gsch` paths without factory/name exclusions.
+Each child build gets a fresh process, a distinct indexed output directory under
+`schematic-builds/` beside the report, and a 600-second timeout. Old GDS output is
+removed before building. A missing GDS or no recursive polygon geometry is an
+error; file size and bounding boxes alone are not success criteria. The helper
+continues after individual failures and exits nonzero if any failed. The workflow
+runs it once, with full dependencies, in each PDK mode and caps the whole step at
+30 minutes. These outputs stay in runner temp; they do not modify the shipped ZIP.
+
+`schematics.json` contains `discovered` (sorted ZIP-relative paths) and `results`
+(one `{path, status}` entry per attempted schematic, plus `error` on a failed
+child invocation). The collector independently re-inventories the ZIP and checks
+an exact, duplicate-free match with all statuses `passed`; missing or malformed
+reports and interrupted builds fail coverage. An empty inventory is explicit
+success only when backed by a readable ZIP and a matching empty report.
+The job summary lists every expected path, and passed-test `summary.json`
+includes the schematic report alongside checks, exclusions, and notebooks.
+Missing helpers or archives preserve collected check outcomes while failing the
+gate. The helper and its tests sync to the public mirror; its download uses the
+existing authenticated-private / unauthenticated-public marker alternatives.
 
 Notebook reports contain `run`, `excluded`, `failed` lists and a
 `skip_execution` map of relative paths to tagged-cell counts. Name patterns
