@@ -47,8 +47,19 @@ Do not add a `name:` to the editable job: its check names must remain
 `test-sample-projects / test / Test <dir>` for the release health gate. Released
 checks are `released / test / Test <dir>` and do not gate merging. Editable
 mode replaces the PDK source with the checkout; released mode does not mask
-committed path sources. Both use the same per-project suite and report every
-exclusion. Package ZIPs contain committed content, with no `build/` stripping.
+committed path sources. Both use the same per-project suite: Python-cell tests
+run with minimal and full dependencies, and one **Build all shipped schematics**
+step runs with full dependencies in the existing `Test <dir>` job. It inventories
+all `.gsch` files in the committed ZIP and uses the editor's GDS pipeline, rather
+than relying on Python-only `gfp test` discovery. Build errors, missing/empty
+geometry, timeouts, and incomplete or duplicate results fail the job and withhold
+passed-test evidence. Every schematic and exclusion is reported; no schematics
+is reported explicitly. The step has a 30-minute total limit and a 600-second
+per-build limit. Package ZIPs contain committed content, with no `build/`
+stripping. This behavior lives in the reusable workflow and its helper, not in
+new callers or separate schematic jobs; existing callers inherit it without a
+template change. See the [suite contract](../.github/workflows/README.md#sample-project-contract)
+for result validation and public-mirror behavior.
 
 Both callers forward only `GFP_API_KEY` (optional in the shared suite).
 The public released caller has no upload settings or mirror token. Uploads
