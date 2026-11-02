@@ -314,6 +314,20 @@ def test_sample_project_suite_result_gate_and_summary(
     collector = next(step for step in steps if step.get("id") == "result")
     final = steps[-1]
     shutil.copy(REPO_ROOT / "scripts/sample_project_ci.py", tmp_path)
+    shutil.copy(REPO_ROOT / "scripts/build_schematics.py", tmp_path)
+    import zipfile
+
+    (tmp_path / "package").mkdir()
+    with zipfile.ZipFile(tmp_path / "package/sample-project.zip", "w") as archive:
+        archive.writestr("nested/demo.gsch", "{}")
+    (tmp_path / "schematics.json").write_text(
+        json.dumps(
+            {
+                "discovered": ["nested/demo.gsch"],
+                "results": [{"path": "nested/demo.gsch", "status": "passed"}],
+            }
+        )
+    )
     (tmp_path / "tested").mkdir()
     (tmp_path / "bin").mkdir()
     uv = tmp_path / "bin/uv"
@@ -410,7 +424,7 @@ def test_sample_project_suite_result_gate_and_summary(
                 outcomes[name] = saved
             outcomes[name]["outcome"] = "success"
     for name in report["checks"]:
-        if name in drc_checks:
+        if name in drc_checks or name == "schematic-inventory":
             continue
         for failure in ("failure", "skipped"):
             outcomes[name]["outcome"] = failure
@@ -421,6 +435,39 @@ def test_sample_project_suite_result_gate_and_summary(
         collect()
         assert (tmp_path / "output").read_text().endswith("ok=false\n"), name
         outcomes[name] = missing
+    path = tmp_path / "schematics.json"
+    original = path.read_text()
+    for broken in (
+        "{}",
+        '{"discovered": ["nested/demo.gsch"], "results": []}',
+        '{"results": null}',
+    ):
+        path.write_text(broken)
+        collect()
+        assert (tmp_path / "output").read_text().endswith("ok=false\n")
+    path.unlink()
+    collect()
+    assert (tmp_path / "output").read_text().endswith("ok=false\n")
+    path.write_text(original)
+    for missing in (
+        "build_schematics.py",
+        "package/sample-project.zip",
+        "sample_project_ci.py",
+    ):
+        path = tmp_path / missing
+        content = path.read_bytes()
+        path.unlink()
+        # Avoid Python's timestamp/size-based bytecode cache hiding a missing helper.
+        shutil.rmtree(tmp_path / "__pycache__", ignore_errors=True)
+        outcomes["scripts"]["outcome"] = "failure"
+        report = collect()
+        assert (tmp_path / "output").read_text().endswith("ok=false\n")
+        assert report["checks"]["scripts"] == "failure"
+        assert (tmp_path / "checks.json").is_file()
+        if missing != "sample_project_ci.py":
+            assert report["checks"]["schematic-inventory"] == "failure"
+        path.write_bytes(content)
+        outcomes["scripts"]["outcome"] = "success"
     collect()
     for ok, published, expected in [
         ("true", "success", 0),
@@ -480,6 +527,21 @@ def test_sample_project_suite_install_modes_and_runtime_pins() -> None:
     assert '--out "$RUNNER_TEMP/notebooks.json"' in steps["notebooks"]["run"]
     for keep in SAMPLE_PROJECT_AUDIENCES:
         resolved = apply_sync_markers(text, keep=keep)
+        public_steps = {
+            step["id"]: step
+            for step in yaml.safe_load(resolved)["jobs"]["test"]["steps"]
+            if "id" in step
+        }
+        assert [name for name in public_steps if name.startswith("schematics")] == [
+            "schematics"
+        ]
+        assert public_steps["schematics"]["timeout-minutes"] == 30
+        assert "build_schematics.py" in public_steps["scripts"]["run"]
+        assert (
+            "validate_report(expected, schematic_report)"
+            in public_steps["result"]["run"]
+        )
+        assert "'schematics'" in public_steps["result"]["run"]
         assert "$SCRIPT_REF" in resolved
         if keep == "private":
             assert "?ref=$SCRIPT_REF" in resolved
@@ -556,7 +618,9 @@ def test_sample_project_secrets_match_contract(keep: str) -> None:
         secrets = data[True]["workflow_call"]["secrets"]
         expected = {"GFP_API_KEY": {"required": False}}
         if private:
-            expected["PDK_CI_WORKFLOW_TOKEN"] = {"required": True}
+            expected["PDK_CI_WORKFLOW_TOKEN"] = {
+                "required": filename == "sample-project-test.yml"
+            }
             if filename == "sample-projects.yml":
                 expected["GSP_SYNC_TOKEN"] = {"required": False}
         assert secrets == expected

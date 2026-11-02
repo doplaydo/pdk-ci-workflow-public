@@ -39,7 +39,7 @@ strips leading/trailing `-`.
 | Artifact (7-day retention) | Contents |
 |---|---|
 | `sample-project-<slug>` | `sample-project.zip` and `meta.json` |
-| `sample-project-tested-<pdk_source>-<slug>` | `meta.json`, `installed-version.txt`, `summary.json`; only when every required check passed |
+| `sample-project-tested-<pdk_source>-<slug>` | `meta.json`, `installed-version.txt`, `summary.json` (checks, exclusions, per-schematic inventory/results, notebook results); only when every required check and schematic inventory validation passed |
 
 The ZIP is `git archive --format=zip HEAD:<project_dir>`, committed files at
 archive root, with nothing stripped. `meta.json` records `project_dir`, `slug`,
@@ -57,7 +57,24 @@ The suite extracts into `$RUNNER_TEMP/project` outside the checkout:
 - Both optionally constrain gdsfactoryplus, configure its index with retries,
   install system dependencies, run `uv sync --no-dev` and `gfp test -v`, then
   `uv sync --all-extras --all-groups`, record the installed PDK version, and
-  run `gfp test -v` again.
+  run `gfp test -v` again. These commands cover Python factories, not `.gsch`.
+- **Schematics:** one `schematics` step, **Build all shipped schematics**, runs
+  after the full-dependency Python tests in this same job, in both PDK modes.
+  `build_schematics.py` inventories every `.gsch` entry in the committed ZIP,
+  independent of factory registration or SDK file discovery. There are no
+  schematic name/path exclusions; a ZIP with none is explicitly reported.
+  Each path is built in a fresh process through the editor's
+  `gdsfactoryplus.compile.build_nyancir_gds` pipeline. Outputs use distinct
+  per-path directories, so matching basenames cannot hide one another.
+  Missing output or a GDS with no recursive polygon geometry fails, as do build
+  exceptions and timeouts. Every remaining schematic is attempted after a build
+  failure. Each build has a 600-second timeout; the entire step has a 30-minute
+  limit, so it may stop before all paths finish. The collector compares the
+  report with a fresh ZIP inventory and rejects missing, duplicate, unexpected,
+  or non-passing results. A missing helper, unreadable archive, malformed report,
+  or partial timed-out run cannot publish passed-test evidence. Schematics and
+  their statuses appear in the job summary and in `summary.json`; missing-input
+  diagnostics preserve check outcomes rather than aborting the collector.
 - All selected notebooks are attempted, collecting failures before failing.
   Paths matching `hfss_|hfss-|matlab_|matlab-|_meep|meep_` are excluded and
   listed, as are `skip-execution`-tagged cell counts and full `gfp test`
@@ -73,6 +90,14 @@ The suite extracts into `$RUNNER_TEMP/project` outside the checkout:
 - Check steps continue to collect results; the final summary table and
   exclusions determine job failure, rather than silently hiding failures.
   Project matrices do not fail fast, and empty project lists skip consumers.
+
+The public mirror includes the same schematic helper, tests, build step, and
+blocking result gate. Public/private sync markers select helper downloads: the
+private variant uses authenticated `gh api`; the public variant uses `curl` from
+the public mirror and needs no private script-read token. Changes to the source
+repository's default branch trigger a sync PR into the public mirror. Validate that projected
+tree with the actual sync exclusions and `keep="public"` marker resolution before
+relying on the mirror's CI; running only the private suite is not equivalent.
 
 Canonical check names are `test-sample-projects / test / Test <dir>` for the
 editable caller and `released / test / Test <dir>` for the released caller.

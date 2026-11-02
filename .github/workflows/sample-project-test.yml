@@ -77,7 +77,7 @@ jobs:
       - id: uv
         name: Set up uv and Python 3.12
         continue-on-error: true
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.12"
 
@@ -88,7 +88,7 @@ jobs:
         env:
           SCRIPT_REF: ${{ inputs.script_ref }}
         run: |
-          for script in sample_project_ci.py build_cell.py; do
+          for script in sample_project_ci.py build_cell.py build_schematics.py; do
             curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/$SCRIPT_REF/scripts/$script" \
               -o "$RUNNER_TEMP/$script"
           done
@@ -187,6 +187,17 @@ jobs:
         continue-on-error: true
         working-directory: ${{ runner.temp }}/project
         run: uv run --no-sync gfp test -v 2>&1 | tee "$RUNNER_TEMP/test-all.log"
+
+      - id: schematics
+        name: Build all shipped schematics
+        timeout-minutes: 30
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          pdk=$(jq -er .pdk_import_name "$RUNNER_TEMP/package/meta.json")
+          uv run --no-sync python "$RUNNER_TEMP/build_schematics.py" \
+            --archive "$RUNNER_TEMP/package/sample-project.zip" --pdk "$pdk" \
+            --out "$RUNNER_TEMP/schematics.json"
 
       - id: notebook-tools
         name: Install notebook tools
@@ -334,12 +345,18 @@ jobs:
           uv run --no-project --with tomlkit python - <<'PYCODE'
           import json, os, pathlib, sys
           sys.path.insert(0, os.environ['RUNNER_TEMP'])
-          from sample_project_ci import gfp_test_skips
+          import zipfile
           temp = pathlib.Path(os.environ['RUNNER_TEMP'])
+          (temp / 'tested').mkdir(exist_ok=True)
+          try:
+              from sample_project_ci import gfp_test_skips
+          except ImportError:
+              def gfp_test_skips(output):
+                  return []
           steps = json.loads(os.environ['STEPS'])
           required = ['download', 'extract', 'uv', 'scripts', 'constraint', 'configure', 'system',
                       'install-minimal', 'test-minimal', 'install-all', 'installed-version',
-                      'test-all', 'notebook-tools', 'notebooks']
+                      'test-all', 'schematics', 'notebook-tools', 'notebooks']
           if os.environ['PDK_SOURCE'] == 'editable':
               required += ['checkout', 'editable']
           fixture = steps.get('drc-fixture', {}).get('outputs', {}).get('present')
@@ -362,9 +379,35 @@ jobs:
               log = temp / f'{name}.log'
               if log.exists():
                   exclusions += gfp_test_skips(log.read_text())
+          expected, schematic_report, inventory_error = [], {}, None
+          try:
+              from build_schematics import shipped_schematics, validate_report
+              expected = shipped_schematics(temp / 'package/sample-project.zip')
+              schematic_report = json.loads((temp / 'schematics.json').read_text())
+              valid = validate_report(expected, schematic_report)
+          except (ImportError, OSError, ValueError, TypeError, AttributeError, zipfile.BadZipFile) as error:
+              inventory_error = str(error)
+              valid = False
+          checks['schematic-inventory'] = 'success' if valid else 'failure'
+          ok = ok and valid
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              print('### Shipped schematics', file=summary)
+              if inventory_error:
+                  print(f'Schematic coverage unavailable: {inventory_error}', file=summary)
+              elif not expected:
+                  print('No shipped .gsch schematics.', file=summary)
+              for name in expected:
+                  results = schematic_report.get('results', [])
+                  matches = [r for r in results if isinstance(r, dict) and r.get('path') == name] if isinstance(results, list) else []
+                  status = matches[0].get('status') if len(matches) == 1 else 'missing or duplicate'
+                  print(f'- `{name}`: {status}', file=summary)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              print('\n### Required check outcomes\n', file=summary)
+              for name, outcome in checks.items():
+                  print(f'- {name}: {outcome}', file=summary)
           (temp / 'checks.json').write_text(json.dumps(checks))
           (temp / 'exclusions.json').write_text(json.dumps(exclusions))
-          report = {'checks': checks, 'exclusions': exclusions}
+          report = {'checks': checks, 'exclusions': exclusions, 'schematics': schematic_report}
           if (temp / 'notebooks.json').exists():
               report['notebooks'] = json.loads((temp / 'notebooks.json').read_text())
           (temp / 'tested/summary.json').write_text(json.dumps(report, indent=2))
