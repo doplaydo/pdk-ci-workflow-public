@@ -194,6 +194,19 @@
     PR regenerates the lock. Warns (doesn't fail) when uv can't be run.
     No-ops when uv.lock is absent.
 
+- id: check-zensical-nav
+  name: Check zensical.toml nav for dead entries
+  entry: check_zensical_nav
+  language: python
+  always_run: true
+  pass_filenames: false
+  description: >
+    Fails when a zensical.toml nav entry points at a page that is not in
+    docs_dir and that nothing in the repo generates (no same-stem source
+    file, no mention in a Makefile or generator script). Zensical renders
+    such entries as 404 links without failing the build, even with
+    --strict. No-ops when there is no zensical.toml.
+
 # =============================================================================
 # Third-party wrapper hooks
 #

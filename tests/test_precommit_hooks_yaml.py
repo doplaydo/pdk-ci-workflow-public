@@ -45,6 +45,7 @@ _PDK_HOOK_IDS = {
     "check-template-drift",
     "check-uv-lock-tracked",
     "check-uv-lock-sync",
+    "check-zensical-nav",
 }
 
 

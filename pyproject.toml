@@ -31,6 +31,7 @@ check_uv_lock_sync = "hooks.check_uv_lock_sync:main"
 check_uv_lock_tracked = "hooks.check_uv_lock_tracked:main"
 check_version_sync = "hooks.check_version_sync:main"
 check_workflows = "hooks.check_workflows:main"
+check_zensical_nav = "hooks.check_zensical_nav:main"
 
 [dependency-groups]
 dev = [

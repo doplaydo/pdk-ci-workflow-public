@@ -135,16 +135,28 @@ on sample-directory changes on `main` and dispatch. Editable mode replaces the
 PDK source with the checkout and feeds the release health gate. Released mode
 uses the package index without adding or ignoring source overrides: a committed
 path source can fail just as it would for a downloader. It is a separate red
-check on failure, not a merge gate. Both modes run the `sample_drc_errors`
-DRC smoke test when a fixture is present. In both modes, non-success DRC
+check on failure, not a merge gate. In both modes the existing per-project job
+runs Python-cell tests in minimal and full dependency environments, then a single
+**Build all shipped schematics** step with full dependencies. `gfp test` discovers
+Python factories, not `.gsch` files: the schematic step independently inventories
+every shipped `.gsch` in the committed ZIP and builds it through the editor's GDS
+pipeline. Build errors, missing output, empty recursive geometry, incomplete or
+duplicate results, and timeouts fail the job and withhold passed-test evidence.
+Every schematic is reported; an empty archive inventory is explicitly reported
+as no schematics. The step has a 30-minute overall limit and a 600-second limit
+per build. Both modes also run the `sample_drc_errors` DRC smoke test when a
+fixture is present. In both modes, non-success DRC
 outcomes emit project/step warnings and appear with `(not blocking)` in the
 summary. DRC never fails the job or withholds passed-test evidence: a sample
 that passes all non-DRC checks on the released PDK is eligible for upload.
 
 Packages are committed `git archive` ZIPs, tested after extraction outside the
 checkout. The portal receives those exact ZIP bytes: nothing is stripped,
-including committed `build/`. Each project has its own job and checks/exclusions
-summary; only passing projects publish passed-test evidence. See
+including committed `build/`. Each project has its own job and summary of required
+checks, schematic results, and exclusions; only passing projects publish
+passed-test evidence. Missing schematic helpers, archives, or reports fail coverage
+without discarding the collector's check outcomes. The public mirror runs the same
+schematic coverage; only helper-download authentication differs. See
 [the workflow contract](.github/workflows/README.md#sample-project-contract)
 for inputs, artifacts, exclusions, and upload safety.
 

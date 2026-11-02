@@ -77,7 +77,7 @@ jobs:
             > .claude_pr_toplevel.jsonl || true
           echo "threads: $(wc -l < .claude_pr_threads.jsonl || echo 0)"
           echo "toplevel: $(wc -l < .claude_pr_toplevel.jsonl || echo 0)"
-      - uses: anthropics/claude-code-action@9171db3e57d6a3140a37ddc2ba92788584e0ead6 # v1
+      - uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
