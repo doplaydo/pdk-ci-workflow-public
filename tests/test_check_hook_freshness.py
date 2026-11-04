@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -112,3 +113,45 @@ class TestCheckHookFreshness:
         )
         monkeypatch.setattr(check_hook_freshness, "_git", _fake_git("a" * 40, "b" * 40))
         assert main() == 1
+
+
+def test_git_uses_cached_repo_under_commit_hook_environment(tmp_path, monkeypatch):
+    """Inherited PDK Git variables must not redirect cached-repository checks."""
+
+    def git(directory, *args):
+        return subprocess.run(
+            ["git", *args], cwd=directory, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    revisions = []
+    for name in ("consumer", "cached-hooks"):
+        directory = tmp_path / name
+        directory.mkdir()
+        git(directory, "init", "-b", "main")
+        git(directory, "config", "user.email", "test@example.com")
+        git(directory, "config", "user.name", "Hook test")
+        (directory / "content").write_text(name)
+        git(directory, "add", "content")
+        git(directory, "commit", "-m", name)
+        revisions.append(git(directory, "rev-parse", "HEAD"))
+    consumer, cached = tmp_path / "consumer", tmp_path / "cached-hooks"
+    git(cached, "remote", "add", "origin", str(cached))
+    monkeypatch.setenv("GIT_DIR", str(consumer / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(consumer))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(consumer / ".git/index"))
+    monkeypatch.setenv("GIT_PREFIX", "nested/")
+    assert revisions[0] != revisions[1]
+    assert check_hook_freshness._git("rev-parse", "HEAD", cwd=cached) == revisions[1]
+    remote = check_hook_freshness._git("ls-remote", "origin", "main", cwd=cached)
+    assert remote.split()[0] == revisions[1]
+
+
+def test_git_env_keeps_config_and_drops_repo_location(monkeypatch):
+    """Transport/credential config survives; repo-location variables don't."""
+    monkeypatch.setenv("GIT_DIR", "/consumer/.git")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'http.extraheader=x'")
+    env = check_hook_freshness._git_env()
+    assert "GIT_DIR" not in env
+    assert env["GIT_CONFIG_COUNT"] == "1"
+    assert env["GIT_CONFIG_PARAMETERS"] == "'http.extraheader=x'"
