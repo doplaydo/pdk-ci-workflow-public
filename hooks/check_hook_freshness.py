@@ -18,6 +18,8 @@ pinned SHA against a moving target forever.
 
 from __future__ import annotations
 
+import functools
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -49,11 +51,39 @@ def _configured_rev() -> str | None:
     return None
 
 
+@functools.cache
+def _repo_local_env_names() -> frozenset[str]:
+    """Env vars Git considers repository-local, minus config/transport settings."""
+    names = subprocess.run(
+        ["git", "rev-parse", "--local-env-vars"],
+        capture_output=True,
+        text=True,
+        timeout=5.0,
+        check=True,
+    ).stdout.split()
+    # GIT_CONFIG* carries `git -c` / credential / transport settings that
+    # `ls-remote` may need; it says nothing about which repo to operate on.
+    return frozenset(n for n in names if not n.startswith("GIT_CONFIG"))
+
+
+def _git_env() -> dict[str, str]:
+    """Environment without the consuming repo's location variables.
+
+    Git exports GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE (e.g. in linked
+    worktrees) when invoking a commit hook, and `cwd` alone does not override
+    them, so commands would inspect the consuming PDK instead of the cached
+    hook repo.
+    """
+    drop = _repo_local_env_names()
+    return {k: v for k, v in os.environ.items() if k not in drop}
+
+
 def _git(*args: str, cwd: Path, timeout: float = 5.0) -> str | None:
     try:
         proc = subprocess.run(
             ["git", *args],
             cwd=cwd,
+            env=_git_env(),
             capture_output=True,
             text=True,
             timeout=timeout,
