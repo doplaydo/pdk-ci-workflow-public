@@ -77,7 +77,11 @@ jobs:
             > .claude_pr_toplevel.jsonl || true
           echo "threads: $(wc -l < .claude_pr_threads.jsonl || echo 0)"
           echo "toplevel: $(wc -l < .claude_pr_toplevel.jsonl || echo 0)"
-      - uses: anthropics/claude-code-action@9171db3e57d6a3140a37ddc2ba92788584e0ead6 # v1
+      - id: claude
+        # A refused ANTHROPIC_API_KEY (revoked key, billing, limits) must not
+        # fail every PR; the next step decides whether this failure counts.
+        continue-on-error: true
+        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
@@ -112,3 +116,21 @@ jobs:
             Only post GitHub comments - don't submit review text as messages.
           claude_args: |
             --allowedTools "Read,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh issue list:*),Bash(gh pr list:*)"
+      - name: Tolerate refused API key
+        if: steps.claude.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN || github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          # The API refusing the key ends the run at once: is_error with zero
+          # cost. Anything else is a real failure and keeps the job red.
+          result=$(jq -c '[.[] | select(.type == "result")] | last // empty' "${EXECUTION_FILE:-$RUNNER_TEMP/claude-execution-output.json}" 2>/dev/null || true)
+          if [ -z "$result" ] || ! jq -e '.is_error == true and ((.total_cost_usd // 0) == 0)' <<<"$result" >/dev/null; then
+            echo "::error::Claude review failed for a reason other than a refused API key."
+            exit 1
+          fi
+          detail=$(jq -r '.result // "no error text"' <<<"$result" | head -c 300)
+          msg="Claude review was skipped because the Anthropic API refused the request ($detail). Most likely ANTHROPIC_API_KEY is invalid or out of credit; no review comments will be posted until it is fixed."
+          echo "::warning::$msg"
+          gh pr comment "$PR_NUMBER" --body "⚠️ $msg" || true
