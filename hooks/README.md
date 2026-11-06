@@ -37,6 +37,7 @@ Each hook is a self-contained Python script that validates some aspect of a PDK 
 | `check-hook-freshness` | `check_hook_freshness.py` | Detects a stale local pre-commit cache: compares the commit the installed hook checkout was cloned from (via the `.git` directory pre-commit leaves alongside the installed venv) against the current tip of this hook repo's `main`, and fails with instructions to run `pre-commit clean` if they differ. Warns instead of failing when offline or the check can't be determined. No-ops inside pdk-ci-workflow itself. |
 | `check-uv-lock-tracked` | `check_uv_lock_tracked.py` | For repos that use uv (Makefile `install` target invokes `uv`, `[tool.uv]` in pyproject.toml, or `uv.lock` already present), `uv.lock` exists and is tracked by git (not gitignored, not simply un-added). Fails if missing, or present but untracked. No-ops for non-uv repos and inside pdk-ci-workflow itself. |
 | `check-uv-lock-sync` | `check_uv_lock_sync.py` | Runs `uv lock --check` to verify `uv.lock` still matches `pyproject.toml`. Catches dependency edits committed without re-running `uv lock` — `uv sync` re-locks silently, so the drift otherwise surfaces only when an unrelated PR regenerates the lock. Warns instead of failing when uv can't be run. No-ops when `uv.lock` is absent and inside pdk-ci-workflow itself. |
+| `check-zensical-nav` | `check_zensical_nav.py` | Every `nav` entry in `zensical.toml` (root or `docs/`) resolves to a page in `docs_dir`, or to one the repo generates at build time: a tracked file with the same stem (notebook source), the stem spelled out in a Makefile/generator script, or a prefix followed by a template placeholder (`f"models_{band}.md"`). Zensical renders a missing nav target as a 404 link without failing the build, even with `--strict`. Errs towards passing. No-ops without a `zensical.toml`. |
 
 ### Multi-band
 
@@ -59,7 +60,13 @@ old callers reference deleted reusable workflows and fail with “workflow not
 found” until refreshed. Do not inline CI into callers to work around this.
 The editable caller retains job id `test-sample-projects` without `name:` so
 the release gate sees `test-sample-projects / test / Test <dir>`; released uses
-job id `released` and a separate, non-merge-blocking check.
+job id `released` and a separate, non-merge-blocking check. Both callers inherit
+Python-cell tests and the single **Build all shipped schematics** step from the
+shared per-project job. Schematic coverage changes require no extra conditional
+template or standalone workflow: update the reusable suite and helper. Failed
+builds, empty geometry, or incomplete schematic results block that project's
+passed-test evidence in either PDK mode. See the
+[suite contract](../.github/workflows/README.md#sample-project-contract).
 
 The public package ships resolved public callers: both forward only the API
 key, neither enables upload or forwards a mirror token. The private central
