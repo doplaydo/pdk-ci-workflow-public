@@ -168,6 +168,54 @@ def render_summary(checks: dict[str, str], exclusions: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
+# Check id -> the exact `name:` of the workflow step behind it, so a result can
+# point at the step in the job log. Guarded by a test against the workflow file.
+CHECK_STEP_NAMES = {
+    "install-minimal": "Install without dev dependencies",
+    "test-minimal": "gfp test: no dev dependencies",
+    "install-all": "Install all extras and groups",
+    "test-all": "gfp test: all project cells",
+    "schematics": "Build all shipped schematics",
+    "notebooks": "Run all notebooks",
+    "drc": "Run DRC",
+}
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_URL_USERINFO = re.compile(r"(://)[^/@\s]+@")
+_EXCERPT_LINES = 12
+
+
+def build_result(
+    summary: dict, ok: bool, temp: Path, runner_name: str | None
+) -> dict:
+    """The `result.json` uploaded for every project, passed or not.
+
+    It is `summary` plus whether the required checks passed, the tail of the
+    log of each failed check that kept one (`<check id>.log` in `temp`, with the
+    API key and URL userinfo redacted), the
+    runner name (a consumer with Actions API access can match it to this job
+    and its steps) and the step name behind each check id.
+    """
+    excerpts = {}
+    for check_id, outcome in summary.get("checks", {}).items():
+        log = temp / f"{check_id}.log"
+        if outcome != "success" and log.is_file():
+            text = _ANSI.sub("", log.read_text(errors="replace"))
+            # Log masking does not reach artifact files: redact the API key
+            # and any URL userinfo (the private index URL carries credentials).
+            if key := os.environ.get("GFP_API_KEY"):
+                text = text.replace(key, "***")
+            text = _URL_USERINFO.sub(r"\1***@", text)
+            excerpts[check_id] = "\n".join(text.splitlines()[-_EXCERPT_LINES:])
+    return {
+        "ok": ok,
+        **summary,
+        "runner_name": runner_name,
+        "step_names": CHECK_STEP_NAMES,
+        "excerpts": excerpts,
+    }
+
+
 def _write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n")
