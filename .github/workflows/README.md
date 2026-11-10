@@ -40,6 +40,7 @@ strips leading/trailing `-`.
 |---|---|
 | `sample-project-<slug>` | `sample-project.zip` and `meta.json` |
 | `sample-project-tested-<pdk_source>-<slug>` | `meta.json`, `installed-version.txt`, `summary.json` (checks, exclusions, per-schematic inventory/results, notebook results); only when every required check and schematic inventory validation passed |
+| `sample-project-result-<pdk_source>-<slug>` | `result.json`: the `summary.json` content plus `ok`, `runner_name`, `step_names` (check id to workflow step name) and `excerpts` (last 12 log lines of each failed check that kept a log, i.e. `gfp test`); uploaded on every run, passed or not, so consumers can report failures |
 
 The ZIP is `git archive --format=zip HEAD:<project_dir>`, committed files at
 archive root, with nothing stripped. `meta.json` records `project_dir`, `slug`,
