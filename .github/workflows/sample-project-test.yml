@@ -413,6 +413,14 @@ jobs:
           (temp / 'tested/summary.json').write_text(json.dumps(report, indent=2))
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               print(f'ok={str(ok).lower()}', file=output)
+          # Best effort and after `ok` is published: a failure here must never
+          # change the job's verdict or skip the passed-test artifact.
+          try:
+              from sample_project_ci import build_result
+              result = build_result(report, ok, temp, os.environ.get('RUNNER_NAME'))
+              (temp / 'tested/result.json').write_text(json.dumps(result, indent=2))
+          except Exception as error:
+              print(f'::warning::result.json not written: {error}')
           PYCODE
 
       - id: passed
@@ -426,6 +434,17 @@ jobs:
             ${{ runner.temp }}/tested/installed-version.txt
             ${{ runner.temp }}/tested/summary.json
           if-no-files-found: error
+          retention-days: 7
+
+      - id: result-artifact
+        name: Upload result (always)
+        if: always() && steps.result.outcome != 'skipped'
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sample-project-result-${{ inputs.pdk_source }}-${{ matrix.project.slug }}
+          path: ${{ runner.temp }}/tested/result.json
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Summarize and decide job colour

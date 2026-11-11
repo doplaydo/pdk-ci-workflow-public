@@ -450,3 +450,75 @@ def test_cli_run_notebooks_prunes_dependency_venvs(tmp_path):
         "failed": [],
         "skip_execution": {"demo.ipynb": 0},
     }
+
+
+def _summary(**checks):
+    base = {"test-minimal": "success", "test-all": "success"}
+    base.update(checks)
+    return {"checks": base, "exclusions": [], "schematics": {"results": []}}
+
+
+def test_build_result_keeps_summary_and_adds_ok(ci, tmp_path):
+    summary = _summary()
+    result = ci.build_result(summary, True, tmp_path, "GitHub Actions 7")
+    assert result["ok"] is True
+    assert result["checks"] == summary["checks"]
+    assert result["exclusions"] == []
+    assert result["schematics"] == summary["schematics"]
+    assert result["excerpts"] == {}
+
+
+def test_build_result_records_runner_and_step_names(ci, tmp_path):
+    result = ci.build_result(_summary(), True, tmp_path, "GitHub Actions 7")
+    assert result["runner_name"] == "GitHub Actions 7"
+    assert result["step_names"] == ci.CHECK_STEP_NAMES
+    assert result["step_names"]["test-all"] == "gfp test: all project cells"
+
+
+def test_build_result_excerpts_tail_of_failed_check_logs_without_ansi(ci, tmp_path):
+    lines = [f"line {i}" for i in range(20)]
+    lines[-1] = "\x1b[1;91mModuleNotFoundError:\x1b[0m No module named 'x'"
+    (tmp_path / "test-all.log").write_text("\n".join(lines) + "\n")
+    (tmp_path / "test-minimal.log").write_text("fine\n")
+    result = ci.build_result(_summary(**{"test-all": "failure"}), False, tmp_path, None)
+    assert list(result["excerpts"]) == ["test-all"]
+    excerpt = result["excerpts"]["test-all"].splitlines()
+    assert len(excerpt) == 12
+    assert excerpt[-1] == "ModuleNotFoundError: No module named 'x'"
+    assert excerpt[0] == "line 8"
+
+
+def test_build_result_has_no_excerpt_when_the_log_is_missing(ci, tmp_path):
+    result = ci.build_result(_summary(**{"test-all": "failure"}), False, tmp_path, None)
+    assert result["excerpts"] == {}
+    assert result["runner_name"] is None
+
+
+def test_check_step_names_match_the_workflow(ci):
+    workflow = (SCRIPT.parents[1] / ".github/workflows/sample-project-test.yml").read_text()
+    for check_id, name in ci.CHECK_STEP_NAMES.items():
+        assert f"id: {check_id}\n" in workflow, check_id
+        assert name in workflow, name
+
+
+def test_build_result_redacts_the_api_key_and_url_userinfo_from_excerpts(
+    ci, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("GFP_API_KEY", "sup3rsecretkey99")
+    (tmp_path / "test-all.log").write_text(
+        "auth failed for sup3rsecretkey99\n"
+        "GET https://user:pw@idx.example/simple/x failed\n"
+    )
+    result = ci.build_result(_summary(**{"test-all": "failure"}), False, tmp_path, None)
+    excerpt = result["excerpts"]["test-all"]
+    assert "sup3rsecretkey99" not in excerpt
+    assert "user:pw" not in excerpt
+    assert "auth failed for ***" in excerpt
+    assert "https://***@idx.example/simple/x" in excerpt
+
+
+def test_build_result_without_an_api_key_leaves_text_alone(ci, tmp_path, monkeypatch):
+    monkeypatch.delenv("GFP_API_KEY", raising=False)
+    (tmp_path / "test-all.log").write_text("plain failure\n")
+    result = ci.build_result(_summary(**{"test-all": "failure"}), False, tmp_path, None)
+    assert result["excerpts"]["test-all"] == "plain failure"
