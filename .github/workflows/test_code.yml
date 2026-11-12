@@ -87,8 +87,42 @@ jobs:
       - name: Install dependencies
         run: |
           make install
+      # Line coverage rides along on this run of the suite. test_coverage.yml
+      # and update_badges.yml download the coverage-xml artifact uploaded
+      # below instead of running `make test` again.
+      - name: Enable coverage
+        id: cov
+        run: |
+          if ! uv run --no-sync python -c "import pytest_cov" 2>/dev/null; then
+            echo "::warning::pytest-cov is not installed in the project environment; running the tests without coverage, so no coverage report is uploaded"
+            exit 0
+          fi
+          pkg=$(uv run --no-sync python - <<'PY'
+          import tomllib
+          with open("pyproject.toml", "rb") as f:
+              cfg = tomllib.load(f)
+          module = cfg.get("tool", {}).get("gdsfactoryplus", {}).get("pdk", {}).get("name", "")
+          print(module.split(".")[0] if module else "")
+          PY
+          )
+          if [ -z "$pkg" ]; then
+            echo "::warning::[tool.gdsfactoryplus.pdk].name is not set in pyproject.toml; running the tests without coverage, so no coverage report is uploaded"
+            exit 0
+          fi
+          # --cov-append accumulates across Makefiles that run pytest several
+          # times, so the coverage.xml left by the last run covers all of them.
+          rm -f .coverage .coverage.* coverage.xml
+          echo "PYTEST_ADDOPTS=${PYTEST_ADDOPTS:+$PYTEST_ADDOPTS }--cov=${pkg} --cov-report=xml --cov-append" >> "$GITHUB_ENV"
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
       - name: Test with pytest
         run: make test
+      - name: Upload coverage report
+        if: steps.cov.outputs.enabled == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: warn
       - name: Upload difftest artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

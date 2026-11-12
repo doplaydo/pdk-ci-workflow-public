@@ -6,21 +6,49 @@ on:
         required: false
 env:
   GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
+permissions:
+  actions: read
+  contents: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-test_coverage
+  # A workflow_run event always carries the default branch as its ref, so key
+  # on the Test code run being reported; a ref-keyed group would let reports
+  # for different PRs cancel each other.
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.id || github.ref }}-test_coverage
   cancel-in-progress: true
 jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
+      # The template triggers on workflow_run after Test code, which uploads
+      # coverage.xml from its own pytest run. Nothing is re-run here.
+      - name: Download coverage report from Test code
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          # Test code only uploads coverage-xml once `make test` has passed, so
+          # the artifact's presence is the gate. The run's overall conclusion is
+          # not: an unrelated job failing must not hide the coverage report.
+          if ! gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name coverage-xml --dir .; then
+            echo "::warning::Test code run $RUN_ID has no coverage-xml artifact"
+          fi
+
+      # Transition path for repos whose test_coverage.yml wrapper still
+      # triggers on pull_request/push: run the suite with coverage here, as
+      # before. Remove once every PDK repo has the workflow_run wrapper.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name != 'workflow_run'
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        if: github.event_name != 'workflow_run'
         with:
           python-version: "3.12"
       - name: Install dependencies
+        if: github.event_name != 'workflow_run'
         run: make install
       - name: Detect package name
         id: pkg
+        if: github.event_name != 'workflow_run'
         shell: uv run python {0}
         run: |
           import tomllib, os
@@ -31,20 +59,32 @@ jobs:
           with open(os.environ.get("GITHUB_OUTPUT", "/dev/null"), "a") as f:
               f.write(f"name={pkg}\n")
       - name: Run tests with coverage
+        if: github.event_name != 'workflow_run'
         env:
           PYTEST_ADDOPTS: "--cov=${{ steps.pkg.outputs.name }} --cov-report=term-missing --cov-report=xml --cov-append -q"
         run: make test
+
       - name: Write summary
         if: always()
-        shell: uv run python {0}
+        shell: python3 {0}
+        env:
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           import xml.etree.ElementTree as ET, os
+          summary = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
+          source = ""
+          if os.environ.get("RUN_URL"):
+              sha = os.environ.get("HEAD_SHA", "")[:7]
+              branch = os.environ.get("HEAD_BRANCH", "")
+              source = f"From [Test code]({os.environ['RUN_URL']}) on `{branch}` at `{sha}`.\n\n"
           try:
               tree = ET.parse("coverage.xml")
               rate = float(tree.getroot().attrib.get("line-rate", 0)) * 100
-              summary = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
-              with open(summary, "a") as f:
-                  f.write(f"## Test Coverage\n\nLine coverage: {rate:.1f}%\n")
-              print(f"Coverage: {rate:.1f}%")
+              text = f"Line coverage: {rate:.1f}%"
           except Exception as e:
-              print(f"Could not parse coverage: {e}")
+              text = f"No coverage report available ({e})"
+          with open(summary, "a") as f:
+              f.write(f"## Test Coverage\n\n{source}{text}\n")
+          print(text)

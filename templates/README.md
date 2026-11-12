@@ -10,18 +10,18 @@ Minimal wrappers — each calls the upstream reusable workflow and forwards secr
 
 | File | Purpose |
 |------|---------|
-| `.github/workflows/test_code.yml` | Pre-commit, pytest, GFP validation |
+| `.github/workflows/test_code.yml` | Pre-commit, pytest with coverage, GFP validation |
 | `.github/workflows/sample-projects-editable.yml` | Shared sample suite against the editable PDK on PRs, pushes to `main`, and dispatch; conditionally deployed when `*--sample-projects/` exists |
 | `.github/workflows/pages.yml` | Sphinx docs build + GitHub Pages |
 | `.github/workflows/claude-pr-review.yml` | AI code review via Claude — runs once on PR open/reopen; re-run on demand with `/claude-api review` comment |
 | `.github/workflows/drc.yml` | Design Rule Check via GFP |
 | `.github/workflows/gds-xor.yml` | Per-layer XOR report for GDS files changed by a PR |
 | `.github/workflows/issue.yml` | Auto-label PDK issues |
-| `.github/workflows/test_coverage.yml` | Pytest with line coverage reporting |
+| `.github/workflows/test_coverage.yml` | Line coverage summary after each Test code run (`workflow_run`) |
 | `.github/workflows/model_coverage.yml` | PDK model-to-cell coverage check |
 | `.github/workflows/model_regression.yml` | Model-specific regression tests |
 | `.github/workflows/sample-projects-released.yml` | Shared sample suite against the released PDK on sample changes on `main` or dispatch; no portal upload in this repo; conditionally deployed |
-| `.github/workflows/update_badges.yml` | Generate coverage, model, issue, and PR badges |
+| `.github/workflows/update_badges.yml` | Generate coverage, model, issue, and PR badges after Test code succeeds on `main`, and nightly |
 | `.github/workflows/code-security.yml` | SAST (Semgrep) and SCA (Trivy) security scans |
 
 

@@ -11,7 +11,7 @@ The docs workflow accepts an optional `runner` input, defaulting to `ubuntu-late
 
 | Workflow | Jobs | Secrets Used | Description |
 |----------|------|-------------|-------------|
-| `test_code.yml` | wheel-contents, pre-commit, test_code, test_gfp, test_gfp_no_dev | `GFP_API_KEY` | Builds and checks wheel reference-file exclusion, pre-commit (fetches canonical config), pytest, GFP validation |
+| `test_code.yml` | wheel-contents, pre-commit, test_code, test_gfp, test_gfp_no_dev | `GFP_API_KEY` | Builds and checks wheel reference-file exclusion, pre-commit (fetches canonical config), pytest with line coverage (uploads `coverage-xml` when pytest-cov is installed; warns and skips coverage otherwise), GFP validation |
 | `sample-projects.yml` | discover, package, test | `GFP_API_KEY` (optional) | PDK entry point: committed ZIP packages → shared suite; never uploads |
 | `sample-project-test.yml` | test | `GFP_API_KEY` (optional) | Shared per-project suite with editable or released PDK; publishes passed-test artifacts only |
 | `pages.yml` | build-docs | `GFP_API_KEY`, `SIMCLOUD_APIKEY` | Sphinx docs build and Pages artifact upload. The caller's wrapper adds the `deploy-docs` job |
@@ -20,10 +20,10 @@ The docs workflow accepts an optional `runner` input, defaulting to `ubuntu-late
 | `gds-xor.yml` | gds-xor | `GITHUB_TOKEN` | Per-layer XOR of every `*.gds` a PR changes: uploads the XOR GDS plus a PDF report with one page per differing layer, and posts a sticky comment with the difference area in um^2. Inline images need an attachment upload, which is attributed to a user account, so with only `GITHUB_TOKEN` the comment links the PDF instead |
 | `code-security.yml` | semgrep, trivy | — | Semgrep (`p/ci`, `p/secrets`) and Trivy (vuln, misconfig, secret; HIGH/CRITICAL with a fix available) filesystem scans with public tooling and read-only access. Findings fail the job and are published to the job summary and as artifacts. To accept a finding, use repo-local suppression: `.trivyignore` (CVE IDs), `.semgrepignore` (paths), or inline `# nosemgrep: <rule-id>` |
 | `issue.yml` | add-label | `GITHUB_TOKEN` | Auto-labels issues with the `pdk` tag plus a per-repository `pdk:<repo-name>` tag |
-| `test_coverage.yml` | coverage | `GFP_API_KEY` | Pytest with line coverage reporting |
+| `test_coverage.yml` | coverage | `GITHUB_TOKEN` (`actions: read`); `GFP_API_KEY` on the transition path only | Line coverage summary for a Test code run, from the `coverage-xml` artifact that run uploaded. Triggered by `workflow_run`; a caller still on `pull_request`/`push` gets the old behaviour (runs `make test` with coverage itself) until it syncs the wrapper |
 | `model_coverage.yml` | model-coverage | `GFP_API_KEY` | PDK model-to-cell coverage check |
 | `model_regression.yml` | model-regression | `GFP_API_KEY` | Model regression tests plus JAX and metadata audits; strict metadata enforcement is opt-in via `enforce-model-metadata` |
-| `update_badges.yml` | badges | `GFP_API_KEY`, `GITHUB_TOKEN` | Generate coverage, model, issue, and PR badges |
+| `update_badges.yml` | badges | `GFP_API_KEY`, `GITHUB_TOKEN` (`actions: read`, `contents: write`) | Generate coverage, model, issue, and PR badges. Coverage comes from the `coverage-xml` artifact of a Test code run: the triggering run on `workflow_run` (successful pushes to `main` only), the latest successful `main` push run on schedule/dispatch. With no artifact the existing `coverage.svg` is kept |
 | `build-pdf.yml` | build-pdf | `GFP_API_KEY`, `SIMCLOUD_APIKEY` | Build PDF docs on demand; uploads artifact and optionally attaches to a release |
 
 ## Sample-project contract
@@ -35,6 +35,20 @@ committed content, then calls `sample-project-test.yml`. Both accept
 callers supply `projects`, a JSON list of `{slug, project_dir}` objects, and
 publish the package artifacts themselves. `slug` replaces `/` with `-` and
 strips leading/trailing `-`.
+
+`sample-project-test.yml` also takes `drc_project_per_pdk` (default `false`).
+gfp 2.x DRC runs through a project named `ci-<repo>` that keeps the deck of the
+PDK it was first created for. A repo that tests several PDKs with one workflow
+must set it to `true`, which names the project `ci-<repo>-<pdk distribution>`;
+otherwise every PDK after the first runs on the wrong deck.
+
+`drc.yml` runs `all_cells` DRC through its own `ci-<repo>-all-cells` project, so
+it never shares a deck with sample-project DRC. The project is created with the
+PDK named by the root `pyproject.toml` if it does not exist yet. Both workflows
+resolve their project with `scripts/drc_project.py` and pass it to
+`gfp check drc --project`; no CI identifier is written to any `pyproject.toml`.
+`drc.yml` takes `script_ref` (default `main`) to download that script from
+another ref of this repo.
 
 | Artifact (7-day retention) | Contents |
 |---|---|
