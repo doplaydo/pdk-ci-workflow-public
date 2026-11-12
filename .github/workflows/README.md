@@ -36,6 +36,12 @@ callers supply `projects`, a JSON list of `{slug, project_dir}` objects, and
 publish the package artifacts themselves. `slug` replaces `/` with `-` and
 strips leading/trailing `-`.
 
+`sample-project-test.yml` also takes `drc_project_per_pdk` (default `false`).
+gfp 2.x DRC runs through a project named `ci-<repo>` that keeps the deck of the
+PDK it was first created for. A repo that tests several PDKs with one workflow
+must set it to `true`, which names the project `ci-<repo>-<pdk distribution>`;
+otherwise every PDK after the first runs on the wrong deck.
+
 | Artifact (7-day retention) | Contents |
 |---|---|
 | `sample-project-<slug>` | `sample-project.zip` and `meta.json` |
