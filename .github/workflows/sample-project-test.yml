@@ -19,6 +19,14 @@ on:
         required: false
         type: string
         default: 'main'
+      drc_project_per_pdk:
+        description: >-
+          Name the DRC project ci-<repo>-<pdk distribution> instead of ci-<repo>.
+          A project keeps the deck of the PDK it was created for, so a repo that
+          tests several PDKs must set this.
+        required: false
+        type: boolean
+        default: false
     secrets:
       GFP_API_KEY:
         required: false
@@ -88,7 +96,7 @@ jobs:
         env:
           SCRIPT_REF: ${{ inputs.script_ref }}
         run: |
-          for script in sample_project_ci.py build_cell.py build_schematics.py; do
+          for script in sample_project_ci.py build_cell.py build_schematics.py drc_project.py; do
             curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/$SCRIPT_REF/scripts/$script" \
               -o "$RUNNER_TEMP/$script"
           done
@@ -237,26 +245,22 @@ jobs:
         if: steps.build-cell.outcome == 'success'
         continue-on-error: true
         working-directory: ${{ runner.temp }}/project
+        env:
+          DRC_PROJECT_PER_PDK: ${{ inputs.drc_project_per_pdk }}
         run: |
           mkdir -p build/lyrdb
           # gfp 2.x picks the DRC deck from a project: use ci-<repo> in the API key's org.
-          project=()
-          if uv run --no-sync python -c "import importlib.metadata as m, sys; sys.exit(int(m.version('gdsfactoryplus').split('.')[0]) < 2)"; then
-            slug="ci-${GITHUB_REPOSITORY#*/}"; slug="${slug,,}"
-            api=https://api.gdsfactory.com/api/portal/sdk
-            if ! curl -sf -H "x-api-key: $GFP_API_KEY" "$api/v2/projects/get_by_slug?slug=$slug" >/dev/null; then
-              dist=$(jq -r '.pdk_distribution | ascii_downcase | gsub("_"; "-")' "$RUNNER_TEMP/package/meta.json")
-              pdk_id=$(curl -sf -H "x-api-key: $GFP_API_KEY" "$api/v1/pdks/list" | jq -r --arg d "$dist" \
-                '[.data[] | select(.package_names | map(ascii_downcase | gsub("_"; "-")) | index($d))][0].id // empty' || true)
-              [ -n "$pdk_id" ] || { echo "::error::No DRC PDK for $dist is available to this API key"; exit 1; }
-              resp=$(curl -s -H "x-api-key: $GFP_API_KEY" -H 'Content-Type: application/json' \
-                -d "{\"name\":\"$slug\",\"slug\":\"$slug\",\"pdk_id\":\"$pdk_id\"}" "$api/v2/projects/create" || true)
-              # Re-check rather than parse: a parallel matrix job may have created it first.
-              curl -sf -H "x-api-key: $GFP_API_KEY" "$api/v2/projects/get_by_slug?slug=$slug" >/dev/null ||
-                { echo "::error::Creating DRC project $slug failed: $resp"; exit 1; }
-            fi
-            project=(--project "$slug")
+          # A project keeps the deck of the PDK it was created for, so with
+          # drc_project_per_pdk each PDK gets ci-<repo>-<distribution>.
+          dist=$(jq -er '.pdk_distribution | ascii_downcase | gsub("_"; "-")' "$RUNNER_TEMP/package/meta.json") ||
+            { echo "::error::meta.json has no pdk_distribution"; exit 1; }
+          slug="ci-${GITHUB_REPOSITORY#*/}"
+          if [ "$DRC_PROJECT_PER_PDK" = "true" ]; then
+            slug="$slug-$(printf '%s' "$dist" | tr -c 'a-z0-9-' '-')"
           fi
+          slug=$(uv run --no-sync python "$RUNNER_TEMP/drc_project.py" --slug "$slug" --distribution "$dist")
+          project=()
+          if [ -n "$slug" ]; then project=(--project "$slug"); fi
           max_attempts=3
           attempt=1
           drc_exit=1
