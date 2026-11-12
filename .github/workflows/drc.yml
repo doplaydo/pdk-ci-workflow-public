@@ -1,6 +1,12 @@
 name: DRC Check
 on:
   workflow_call:
+    inputs:
+      script_ref:
+        description: Ref of this repo to download the helper scripts from.
+        required: false
+        type: string
+        default: 'main'
     secrets:
       GFP_API_KEY:
         required: false
@@ -25,10 +31,14 @@ jobs:
         run: uv sync --all-extras -P gdsfactoryplus
       - name: Configure gfp
         run: uv run gfp configure --api-key ${{ secrets.GFP_API_KEY }} --uv
-      - name: Download build_cell script
+      - name: Download helper scripts
+        env:
+          SCRIPT_REF: ${{ inputs.script_ref }}
         run: |
-          curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/scripts/build_cell.py" \
-            -o build_cell.py
+          for script in build_cell.py drc_project.py; do
+            curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/$SCRIPT_REF/scripts/$script" \
+              -o "$script"
+          done
       - name: Build cell
         run: |
           SKIP_ARGS=""
@@ -37,12 +47,23 @@ jobs:
             SKIP_ARGS="--skip $(grep -v '^\s*#' "$SKIP_FILE" | grep -v '^\s*$' | tr '\n' ' ')"
           fi
           uv run python build_cell.py all_cells $SKIP_ARGS
-      - name: Run DRC
+      - id: drc-project
+        name: Resolve DRC project
         shell: bash
         run: |
+          # all_cells gets its own project so it never shares a deck with sample-project DRC.
+          slug=$(uv run python drc_project.py --slug "ci-${GITHUB_REPOSITORY#*/}-all-cells")
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+      - name: Run DRC
+        shell: bash
+        env:
+          DRC_PROJECT: ${{ steps.drc-project.outputs.slug }}
+        run: |
           mkdir -p build/lyrdb
+          project=()
+          if [ -n "$DRC_PROJECT" ]; then project=(--project "$DRC_PROJECT"); fi
           set +e
-          uv run gfp check drc build/gds/all_cells.gds --outpath build/lyrdb/all_cells.lyrdb 2>&1 | tee build/drc.log
+          uv run gfp check drc build/gds/all_cells.gds "${project[@]}" --outpath build/lyrdb/all_cells.lyrdb 2>&1 | tee build/drc.log
           statuses=("${PIPESTATUS[@]}")
           set -e
           if [ "${statuses[0]}" -ne 0 ]; then
