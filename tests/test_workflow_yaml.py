@@ -706,3 +706,295 @@ def test_claude_review_tolerates_refused_api_key() -> None:
     assert "exit 1" in gate["run"]
     assert "::warning::" in gate["run"]
     assert "gh pr comment" in gate["run"]
+
+
+# ── Coverage from the single test_code run ─────────────────────────
+
+
+def _template(name: str) -> dict:
+    return _load_yaml(TEMPLATES_DIR / name)
+
+
+def _on(data: dict) -> dict:
+    return data.get("on") or data.get(True)
+
+
+def _steps(path: Path, job: str) -> list[dict]:
+    return _load_yaml(path)["jobs"][job]["steps"]
+
+
+def _step(steps: list[dict], name: str) -> dict:
+    return next(s for s in steps if s.get("name") == name)
+
+
+def test_test_code_uploads_coverage_from_its_own_run() -> None:
+    """``make test`` runs once with coverage and uploads ``coverage.xml``;
+    the coverage and badge workflows consume that artifact."""
+    steps = _steps(WORKFLOWS_DIR / "test_code.yml", "test_code")
+    names = [s.get("name") for s in steps]
+    assert names.index("Enable coverage") < names.index("Test with pytest")
+    assert names.index("Test with pytest") < names.index("Upload coverage report")
+
+    enable = _step(steps, "Enable coverage")["run"]
+    assert 'import pytest_cov' in enable
+    assert "::warning::" in enable, "missing pytest-cov must warn, not fail"
+    assert "--cov-append" in enable and "--cov-report=xml" in enable
+    assert "PYTEST_ADDOPTS=" in enable and "GITHUB_ENV" in enable
+    assert "--cov-append -q" not in enable, "must not change the required check's output"
+
+    upload = _step(steps, "Upload coverage report")
+    assert upload["if"] == "steps.cov.outputs.enabled == 'true'"
+    assert upload["with"]["name"] == "coverage-xml"
+    assert upload["with"]["path"] == "coverage.xml"
+
+
+def test_enable_coverage_skips_without_pytest_cov(tmp_path: Path) -> None:
+    """Run the real step with a ``uv`` stub whose environment lacks
+    pytest-cov: it must exit 0, warn, and leave PYTEST_ADDOPTS unset."""
+    run = _step(_steps(WORKFLOWS_DIR / "test_code.yml", "test_code"), "Enable coverage")[
+        "run"
+    ]
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    uv = bindir / "uv"
+    uv.write_text("#!/bin/sh\nexit 1\n")
+    uv.chmod(0o755)
+    env_file, out_file = tmp_path / "env", tmp_path / "out"
+    env_file.touch()
+    out_file.touch()
+    proc = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", run],
+        cwd=tmp_path,
+        env={
+            "PATH": f"{bindir}:/usr/bin:/bin",
+            "GITHUB_ENV": str(env_file),
+            "GITHUB_OUTPUT": str(out_file),
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "::warning::pytest-cov" in proc.stdout
+    assert env_file.read_text() == ""
+    assert out_file.read_text() == ""
+
+
+def test_enable_coverage_skips_without_pdk_name(tmp_path: Path) -> None:
+    """With pytest-cov present but no ``[tool.gdsfactoryplus.pdk].name``,
+    the step must warn and skip instead of emitting a bare ``--cov=``."""
+    run = _step(_steps(WORKFLOWS_DIR / "test_code.yml", "test_code"), "Enable coverage")[
+        "run"
+    ]
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    uv = bindir / "uv"
+    # `uv run --no-sync python -c ...` succeeds; the pkg lookup prints nothing.
+    uv.write_text("#!/bin/sh\nexit 0\n")
+    uv.chmod(0o755)
+    env_file, out_file = tmp_path / "env", tmp_path / "out"
+    env_file.touch()
+    out_file.touch()
+    proc = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", run],
+        cwd=tmp_path,
+        env={
+            "PATH": f"{bindir}:/usr/bin:/bin",
+            "GITHUB_ENV": str(env_file),
+            "GITHUB_OUTPUT": str(out_file),
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "::warning::[tool.gdsfactoryplus.pdk].name" in proc.stdout
+    assert env_file.read_text() == ""
+    assert out_file.read_text() == ""
+
+
+def test_coverage_template_follows_test_code() -> None:
+    """The coverage wrapper triggers on completion of the workflow the
+    test_code wrapper names, and grants the token what the cross-run
+    artifact download needs."""
+    test_code_name = _template("test_code.yml")["name"]
+    cov = _template("test_coverage.yml")
+    assert _on(cov) == {
+        "workflow_run": {"workflows": [test_code_name], "types": ["completed"]}
+    }
+    assert cov["jobs"]["coverage"]["permissions"]["actions"] == "read"
+    assert cov["jobs"]["coverage"]["permissions"]["statuses"] == "write"
+
+
+@pytest.mark.parametrize(
+    ("report", "conclusion", "state", "description"),
+    [
+        ('<coverage line-rate="0.425"/>', "failure", "success", "Line coverage: 42.5%"),
+        ("not xml", "success", "success", "Coverage report unreadable"),
+        (None, "success", "success", "No coverage report from Test code"),
+        (None, "failure", "failure", "Test code failure, no coverage report"),
+    ],
+)
+def test_coverage_reports_required_status_on_tested_commit(
+    tmp_path: Path,
+    report: str | None,
+    conclusion: str,
+    state: str,
+    description: str,
+) -> None:
+    """A workflow_run job is invisible on the PR, so the step posts the
+    ``coverage / coverage`` context that PDK rulesets require onto the
+    tested head SHA. Run it with a ``gh`` stub that records its arguments."""
+    steps = _steps(WORKFLOWS_DIR / "test_coverage.yml", "coverage")
+    step = _step(steps, "Report coverage status on the tested commit")
+    assert step["if"] == "always() && github.event_name == 'workflow_run'"
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    gh = bindir / "gh"
+    log = tmp_path / "gh.log"
+    gh.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > {log}\n')
+    gh.chmod(0o755)
+    if report is not None:
+        (tmp_path / "coverage.xml").write_text(report)
+    proc = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+        cwd=tmp_path,
+        env={
+            "PATH": f"{bindir}:/usr/bin:/bin",
+            "GITHUB_REPOSITORY": "org/pdk",
+            "HEAD_SHA": "abc123",
+            "CONCLUSION": conclusion,
+            "TARGET_URL": "https://example.invalid/run",
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    args = log.read_text().splitlines()
+    assert "repos/org/pdk/statuses/abc123" in args
+    assert "context=coverage / coverage" in args
+    assert f"state={state}" in args
+    assert f"description={description}" in args
+
+
+def test_coverage_status_soft_fails_without_statuses_permission(
+    tmp_path: Path,
+) -> None:
+    """A wrapper that predates ``statuses: write`` must still get its
+    coverage summary: a refused status post warns instead of failing."""
+    steps = _steps(WORKFLOWS_DIR / "test_coverage.yml", "coverage")
+    run = _step(steps, "Report coverage status on the tested commit")["run"]
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    gh = bindir / "gh"
+    gh.write_text("#!/bin/sh\necho 'HTTP 403' >&2\nexit 1\n")
+    gh.chmod(0o755)
+    proc = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", run],
+        cwd=tmp_path,
+        env={
+            "PATH": f"{bindir}:/usr/bin:/bin",
+            "GITHUB_REPOSITORY": "org/pdk",
+            "HEAD_SHA": "abc123",
+            "CONCLUSION": "success",
+            "TARGET_URL": "https://example.invalid/run",
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "::warning::Could not post the coverage status" in proc.stdout
+
+
+def test_coverage_reusable_downloads_instead_of_rerunning() -> None:
+    path = WORKFLOWS_DIR / "test_coverage.yml"
+    data = _load_yaml(path)
+    assert "permissions" not in data, (
+        "a called workflow asking for more than an older wrapper grants "
+        "fails to start; inherit the caller's token instead"
+    )
+    group = data["concurrency"]["group"]
+    assert "github.event.workflow_run.id" in group, (
+        "workflow_run always has the default branch as its ref; a ref-keyed "
+        "group would let different PRs' reports cancel each other"
+    )
+    steps = data["jobs"]["coverage"]["steps"]
+    download = _step(steps, "Download coverage report from Test code")
+    assert download["if"] == "github.event_name == 'workflow_run'"
+    assert "gh run download" in download["run"]
+    assert "coverage-xml" in download["run"]
+    assert "workflow_run.conclusion" not in str(download), (
+        "an unrelated failed job must not hide coverage that test_code uploaded"
+    )
+    # The suite only runs on the transition path (legacy push/PR wrapper).
+    run_tests = _step(steps, "Run tests with coverage")
+    assert run_tests["if"] == "github.event_name != 'workflow_run'"
+
+
+def test_badges_template_follows_test_code_and_keeps_cron() -> None:
+    test_code_name = _template("test_code.yml")["name"]
+    on = _on(_template("update_badges.yml"))
+    assert on["workflow_run"] == {
+        "workflows": [test_code_name],
+        "types": ["completed"],
+    }
+    assert "schedule" in on and "workflow_dispatch" in on
+    assert "push" not in on, "push races Test code and reads the previous artifact"
+    perms = _template("update_badges.yml")["jobs"]["badges"]["permissions"]
+    assert perms["actions"] == "read" and perms["contents"] == "write"
+
+
+def test_badges_publish_only_main_push_runs() -> None:
+    data = _load_yaml(WORKFLOWS_DIR / "update_badges.yml")
+    assert data["permissions"]["actions"] == "read"
+    cond = data["jobs"]["badges"]["if"]
+    for clause in (
+        "github.event_name != 'workflow_run'",
+        "github.event.workflow_run.conclusion == 'success'",
+        "github.event.workflow_run.event == 'push'",
+        "github.event.workflow_run.head_branch == 'main'",
+        "github.event.workflow_run.head_repository.full_name == github.repository",
+    ):
+        assert clause in cond, f"badges job condition is missing {clause!r}"
+
+
+def test_badges_concurrency_keeps_pr_runs_out_of_the_main_group() -> None:
+    """On workflow_run the ref is always the default branch; runs that can't
+    publish must not share (and cancel) the main badge run's group."""
+    data = _load_yaml(WORKFLOWS_DIR / "update_badges.yml")
+    group, cond = data["concurrency"]["group"], data["jobs"]["badges"]["if"]
+    assert "github.event.workflow_run.id" in group
+    # Only a run that will actually publish may join (and cancel within) the
+    # ref group, so the group mirrors every clause of the job condition.
+    for clause in (
+        "github.event_name != 'workflow_run'",
+        "github.event.workflow_run.conclusion == 'success'",
+        "github.event.workflow_run.event == 'push'",
+        "github.event.workflow_run.head_branch == 'main'",
+        "github.event.workflow_run.head_repository.full_name == github.repository",
+    ):
+        assert clause in cond and clause in group, clause
+
+
+def test_badges_do_not_rerun_the_suite() -> None:
+    text = (WORKFLOWS_DIR / "update_badges.yml").read_text()
+    assert "make test" not in text
+    fetch = _step(
+        _steps(WORKFLOWS_DIR / "update_badges.yml", "badges"),
+        "Fetch coverage report from Test code",
+    )["run"]
+    assert "--workflow test_code.yml" in fetch
+    assert "--branch main" in fetch and "--status success" in fetch
+    assert "gh run download" in fetch
+
+
+def test_badges_keep_filenames_and_previous_coverage() -> None:
+    """Downstream scrapers read these exact filenames from the badges
+    branch; a missing coverage report must leave the old coverage.svg
+    rather than publish 0%."""
+    steps = _steps(WORKFLOWS_DIR / "update_badges.yml", "badges")
+    gen = _step(steps, "Generate all badges")["run"]
+    for name in ("coverage.svg", "model_coverage.svg", "cells.svg", "issues.svg", "prs.svg"):
+        assert f'"{name}"' in gen
+    assert "rate = 0\n" not in gen
+    push = _step(steps, "Push badges to badges branch")["run"]
+    assert "cp badges/model_coverage.svg badges/cells.svg badges/issues.svg badges/prs.svg" in push
+    assert 'if [ -f badges/coverage.svg ]; then cp badges/coverage.svg "$tmp/"; fi' in push
