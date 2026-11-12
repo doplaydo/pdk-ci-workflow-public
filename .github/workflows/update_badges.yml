@@ -7,18 +7,33 @@ on:
 env:
   GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
 permissions:
+  actions: read
   contents: write
   issues: read
   pull-requests: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-update_badges
+  # A workflow_run event always carries the default branch as its ref, so a
+  # ref-keyed group would let every PR's Test code completion cancel the main
+  # badge update in progress. Only runs that can publish (the job's `if`
+  # below) share the group; the rest get their own and skip the job.
+  group: ${{ github.workflow }}-${{ (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository)) && github.ref || github.event.workflow_run.id }}-update_badges
   cancel-in-progress: true
 jobs:
   badges:
+    # On workflow_run, publish only a successful Test code run from a push to
+    # this repo's main branch. head_branch alone would also match a PR opened
+    # from a fork's main branch.
+    if: >-
+      github.event_name != 'workflow_run' || (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      )
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.12"
       - name: Install dependencies
@@ -37,11 +52,25 @@ jobs:
               f.write(f"name={name}\n")
               f.write(f"module={module}\n")
 
-      - name: Compute test coverage
-        run: make test
-        continue-on-error: true
+      # Test code uploads coverage.xml from its own pytest run; reuse it rather
+      # than running the suite again. workflow_run reports the run that
+      # triggered this one; schedule and workflow_dispatch take the latest
+      # successful push run on main.
+      - name: Fetch coverage report from Test code
         env:
-          PYTEST_ADDOPTS: "--cov=${{ steps.pkg.outputs.name }} --cov-report=xml --cov-append -q"
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "workflow_run" ]; then
+            RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow test_code.yml \
+              --branch main --event push --status success --limit 1 \
+              --json databaseId --jq '.[0].databaseId // empty' || true)
+          fi
+          if [ -z "$RUN_ID" ]; then
+            echo "::warning::No successful Test code run on main found; keeping the previous coverage badge"
+          elif ! gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name coverage-xml --dir .; then
+            echo "::warning::Test code run $RUN_ID has no coverage-xml artifact; keeping the previous coverage badge"
+          fi
 
       - name: Generate all badges
         shell: uv run python {0}
@@ -89,13 +118,16 @@ jobs:
               print(f"  {filename}: {label} = {value}")
 
           # --- Test Coverage ---
+          # No report means no measurement, not 0%: skip coverage.svg so the
+          # push step leaves the badge already on the badges branch in place.
           try:
               tree = ET.parse("coverage.xml")
               rate = float(tree.getroot().attrib.get("line-rate", 0)) * 100
-          except Exception:
-              rate = 0
-          color = "#4c1" if rate >= 80 else ("#dfb317" if rate >= 60 else "#e05d44")
-          make_badge("coverage", f"{rate:.0f}%", color, "coverage.svg")
+          except Exception as e:
+              print(f"  coverage.svg: no coverage report ({e}), keeping the previous badge")
+          else:
+              color = "#4c1" if rate >= 80 else ("#dfb317" if rate >= 60 else "#e05d44")
+              make_badge("coverage", f"{rate:.0f}%", color, "coverage.svg")
 
           # --- Model Coverage ---
           pdk_module = os.environ.get("PDK_MODULE", "")
@@ -145,7 +177,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           tmp=$(mktemp -d)
-          cp badges/coverage.svg badges/model_coverage.svg badges/cells.svg badges/issues.svg badges/prs.svg "$tmp/"
+          cp badges/model_coverage.svg badges/cells.svg badges/issues.svg badges/prs.svg "$tmp/"
+          if [ -f badges/coverage.svg ]; then cp badges/coverage.svg "$tmp/"; fi
 
           # Clean untracked files so branch checkout succeeds
           git clean -fd
