@@ -115,3 +115,23 @@ def test_drc_log_redacts_api_key(tmp_path):
     )
     assert result.returncode == 0
     assert log.read_text() == "remote diagnostic: ***"
+
+
+@pytest.mark.parametrize("project", ["", "ci-mypdk"])
+def test_drc_passes_project(tmp_path, project):
+    fake_uv = (
+        'uv() { echo "args: $*"; mkdir -p build/lyrdb; '
+        'echo "<x/>" > build/lyrdb/all_cells.lyrdb; }\n'
+    )
+    result = subprocess.run(
+        ["bash", "-eo", "pipefail", "-c", fake_uv + step_script("Run DRC", "private")],
+        cwd=tmp_path,
+        env={**os.environ, "DRC_PROJECT": project},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    args = (tmp_path / "build/drc.log").read_text()
+    assert ("--project ci-mypdk" in args) == bool(project)
+
