@@ -2,12 +2,12 @@ name: Test Coverage
 on:
   workflow_call:
     secrets:
+      # No longer used. Kept so callers that still pass it don't fail.
       GFP_API_KEY:
         required: false
-env:
-  GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
-# No permissions block: the token is whatever the caller grants. Asking for
-# more than an older wrapper grants would stop the run from starting.
+# No permissions block: the token is whatever the caller grants. The Test code
+# template grants this job `contents: read` only; downloading an artifact of
+# the same run needs no token scope at all.
 concurrency:
   # A workflow_run event always carries the default branch as its ref, so key
   # on the Test code run being reported; a ref-keyed group would let reports
@@ -18,79 +18,92 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
-      # The template triggers on workflow_run after Test code, which uploads
-      # coverage.xml from its own pytest run. Nothing is re-run here.
-      - name: Download coverage report from Test code
+      # The Test code template calls this as its `coverage` job with
+      # `needs: test`, so the required `coverage / coverage` check is a job of
+      # the same run. test_code uploads coverage-xml only after `make test`
+      # has passed, so the artifact's presence is the test gate.
+      - name: Download coverage report from test_code
+        id: download
+        if: github.event_name != 'workflow_run'
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-xml
+
+      # Transition path for repos whose test_coverage.yml wrapper still
+      # triggers on workflow_run of Test code. check-template-drift deletes
+      # that wrapper on the next sync; remove this step and the status post
+      # below once no PDK repo carries it.
+      - name: Download coverage report from the Test code run
         if: github.event_name == 'workflow_run'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
-          # Test code only uploads coverage-xml once `make test` has passed, so
-          # the artifact's presence is the gate. The run's overall conclusion is
-          # not: an unrelated job failing must not hide the coverage report.
           if ! gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name coverage-xml --dir .; then
             echo "::warning::Test code run $RUN_ID has no coverage-xml artifact"
           fi
 
-      # Transition path for repos whose test_coverage.yml wrapper still
-      # triggers on pull_request/push: run the suite with coverage here, as
-      # before. Remove once every PDK repo has the workflow_run wrapper.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: github.event_name != 'workflow_run'
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        if: github.event_name != 'workflow_run'
-        with:
-          python-version: "3.12"
-      - name: Install dependencies
-        if: github.event_name != 'workflow_run'
-        run: make install
-      - name: Detect package name
-        id: pkg
-        if: github.event_name != 'workflow_run'
-        shell: uv run python {0}
-        run: |
-          import tomllib, os
-          with open("pyproject.toml", "rb") as f:
-              cfg = tomllib.load(f)
-          module = cfg.get("tool", {}).get("gdsfactoryplus", {}).get("pdk", {}).get("name", "")
-          pkg = module.split(".")[0] if module else ""
-          with open(os.environ.get("GITHUB_OUTPUT", "/dev/null"), "a") as f:
-              f.write(f"name={pkg}\n")
-      - name: Run tests with coverage
-        if: github.event_name != 'workflow_run'
-        env:
-          PYTEST_ADDOPTS: "--cov=${{ steps.pkg.outputs.name }} --cov-report=term-missing --cov-report=xml --cov-append -q"
-        run: make test
-
-      - name: Write summary
+      - name: Check coverage report
         if: always()
         shell: python3 {0}
         env:
           RUN_URL: ${{ github.event.workflow_run.html_url }}
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
         run: |
-          import xml.etree.ElementTree as ET, os
-          summary = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
+          import os, sys
+          import xml.etree.ElementTree as ET
+
+          legacy = os.environ.get("GITHUB_EVENT_NAME") == "workflow_run"
           source = ""
           if os.environ.get("RUN_URL"):
               sha = os.environ.get("HEAD_SHA", "")[:7]
               branch = os.environ.get("HEAD_BRANCH", "")
               source = f"From [Test code]({os.environ['RUN_URL']}) on `{branch}` at `{sha}`.\n\n"
-          try:
-              tree = ET.parse("coverage.xml")
-              rate = float(tree.getroot().attrib.get("line-rate", 0)) * 100
-              text = f"Line coverage: {rate:.1f}%"
-          except Exception as e:
-              text = f"No coverage report available ({e})"
-          with open(summary, "a") as f:
+          ok = False
+          if not os.path.exists("coverage.xml"):
+              text = (
+                  "No coverage report: test_code uploaded no coverage-xml artifact. "
+                  "Its tests failed or did not run, or coverage was disabled "
+                  "(see the test_code job's warnings)."
+              )
+              if os.environ.get("DOWNLOAD_OUTCOME") == "failure":
+                  # download-artifact fails both for a missing artifact and
+                  # for API/network errors; its log tells them apart.
+                  text += (
+                      " The download step failed; if test_code did upload "
+                      "coverage-xml, check that step's log for an API or network error."
+                  )
+          else:
+              try:
+                  root = ET.parse("coverage.xml").getroot()
+                  if root.tag != "coverage":
+                      raise ValueError(f"root element is <{root.tag}>, not <coverage>")
+                  rate = float(root.attrib["line-rate"])
+                  if not 0.0 <= rate <= 1.0:
+                      raise ValueError(f"line-rate {rate} is outside [0, 1]")
+              except Exception as e:
+                  text = f"Invalid coverage report ({type(e).__name__}: {e})"
+              else:
+                  text = f"Line coverage: {rate * 100:.1f}%"
+                  ok = True
+          with open(os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null"), "a") as f:
               f.write(f"## Test Coverage\n\n{source}{text}\n")
-          print(text)
+          if ok:
+              print(text)
+          elif legacy:
+              # On the transition path the verdict travels in the commit
+              # status below; this run is attached to the default branch.
+              print(f"::warning::{text}")
+          else:
+              print(f"::error::{text}")
+              sys.exit(1)
 
-      # A workflow_run job never shows up on the PR it reports on, yet PDK
-      # rulesets require `coverage / coverage` there. Post that context as a
-      # commit status on the tested head SHA so the PR is not left waiting.
+      # Transition path only, see above: a workflow_run job never shows up on
+      # the PR it reports on, so the legacy wrapper posts the required context
+      # as a commit status on the tested head SHA.
       - name: Report coverage status on the tested commit
         if: always() && github.event_name == 'workflow_run'
         env:

@@ -30,7 +30,6 @@ TEMPLATES: list[str] = [
     ".github/workflows/pages.yml",
     ".github/workflows/build-pdf.yml",
     ".github/workflows/test_code.yml",
-    ".github/workflows/test_coverage.yml",
     ".github/workflows/update_badges.yml",
     ".github/workflows/code-security.yml",
     "AGENTS.md",
@@ -52,6 +51,9 @@ DEPRECATED_TEMPLATES: list[str] = [
     ".github/workflows/auto-label-pdk.yml",
     # nyanlib generation was removed from CI; its reusable workflow is gone.
     ".github/workflows/generate_nyanlib.yml",
+    # Coverage is now the `coverage` job of the Test code template (needs:
+    # test, same run). The standalone workflow_run wrapper is retired.
+    ".github/workflows/test_coverage.yml",
 ]
 
 # Files that must never be committed to a PDK repo (secrets, local env

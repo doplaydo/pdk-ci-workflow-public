@@ -75,7 +75,15 @@ jobs:
     uses: doplaydo/pdk-ci-workflow-public/.github/workflows/test_code.yml@main
     secrets:
       GFP_API_KEY: ${{ secrets.GFP_API_KEY }}
+  coverage:
+    needs: test
+    if: ${{ !cancelled() }}
+    permissions:
+      contents: read
+    uses: doplaydo/pdk-ci-workflow-public/.github/workflows/test_coverage.yml@main
 ```
+
+The `coverage` job is the required `coverage / coverage` check. `if: ${{ !cancelled() }}` matters: a plain `needs:` job is *skipped* when a test job fails, and a skipped required check counts as passing.
 
 
 ### 2. Set up pre-commit
@@ -120,7 +128,7 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 | `drc.yml` | drc | Design Rule Check with GFP and badge generation |
 | `gds-xor.yml` | gds-xor | Per-layer XOR of every `*.gds` changed by a PR: a downloadable XOR GDS plus a PDF report with one page per differing layer, and a PR comment showing the difference area in um^2 |
 | `issue.yml` | add-label | Auto-labels issues with "pdk" tag |
-| `test_coverage.yml` | coverage | Line coverage summary for a Test code run, read from its `coverage-xml` artifact (no second test run) |
+| `test_coverage.yml` | coverage | Line coverage check for a Test code run, read from its `coverage-xml` artifact (no second test run); called as the `coverage` job of the Test code template and fails on failed tests or a missing/invalid report |
 | `model_coverage.yml` | model-coverage | PDK model-to-cell coverage check |
 | `model_regression.yml` | model-regression | Model regression tests, JAX audit, and metadata audit with opt-in enforcement |
 | `update_badges.yml` | badges | Generate coverage, model, issue, and PR badges; coverage comes from Test code's `coverage-xml` artifact |
@@ -214,10 +222,10 @@ PDK repos must have these secrets configured and forwarded explicitly in their w
 
 | Secret | Used by |
 |--------|---------|
-| `GFP_API_KEY` | test_code, sample-projects, sample-project-test (optional for the suite), pages, drc, test_coverage, model_coverage, model_regression, update_badges; public sample workflows test only, without portal upload credentials |
+| `GFP_API_KEY` | test_code, sample-projects, sample-project-test (optional for the suite), pages, drc, model_coverage, model_regression, update_badges; public sample workflows test only, without portal upload credentials |
 | `ANTHROPIC_API_KEY` | claude-pr-review |
 | `SIMCLOUD_APIKEY` | pages |
-| `GITHUB_TOKEN` | issue, test_coverage, update_badges (automatic) |
+| `GITHUB_TOKEN` | issue, update_badges (automatic) |
 
 ### Repository Variables
 
@@ -284,14 +292,13 @@ Reference configuration files are provided in `templates/` for onboarding new PD
 | Template | Purpose |
 |----------|---------|
 | `.pre-commit-config.yaml` | Canonical pre-commit config (PDK hooks + third-party tools with centralized versions) |
-| `.github/workflows/test_code.yml` | Pre-commit, pytest with coverage, and GFP validation |
+| `.github/workflows/test_code.yml` | Pre-commit, pytest with coverage, GFP validation, and the required `coverage / coverage` check (a `needs:` job in the same run) |
 | `.github/workflows/sample-projects-editable.yml` | Shared sample suite against the editable PDK on PRs, pushes to `main`, and dispatch; conditionally deployed when `*--sample-projects/` exists |
 | `.github/workflows/pages.yml` | Sphinx docs build and GitHub Pages deployment |
 | `.github/workflows/claude-pr-review.yml` | AI code review via Claude — runs once on PR open/reopen; re-run on demand with `/claude-api review` comment |
 | `.github/workflows/drc.yml` | Design Rule Check via GFP |
 | `.github/workflows/gds-xor.yml` | Per-layer XOR report for GDS files changed by a PR |
 | `.github/workflows/issue.yml` | Auto-label PDK issues |
-| `.github/workflows/test_coverage.yml` | Line coverage summary after each Test code run (`workflow_run`) |
 | `.github/workflows/model_coverage.yml` | PDK model-to-cell coverage check |
 | `.github/workflows/model_regression.yml` | Model-specific regression tests |
 | `.github/workflows/sample-projects-released.yml` | Shared sample suite against the released PDK on sample changes on `main` or dispatch; no portal upload in this repo; conditionally deployed |
@@ -332,7 +339,7 @@ PDK repositories consuming these workflows need:
 ### GitHub Secrets
 
 For PDK repositories (passed explicitly in each wrapper workflow):
-- `GFP_API_KEY` - GDSFactory Platform validation and package-index configuration (test_code, sample-projects, sample-project-test, pages, drc, test_coverage, model_coverage, model_regression, update_badges)
+- `GFP_API_KEY` - GDSFactory Platform validation and package-index configuration (test_code, sample-projects, sample-project-test, pages, drc, model_coverage, model_regression, update_badges)
 - `ANTHROPIC_API_KEY` - Claude code reviews (claude-pr-review)
 - `SIMCLOUD_APIKEY` - Simulation cloud access (pages)
 

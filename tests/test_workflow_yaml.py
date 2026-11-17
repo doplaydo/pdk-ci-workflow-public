@@ -811,17 +811,111 @@ def test_enable_coverage_skips_without_pdk_name(tmp_path: Path) -> None:
     assert out_file.read_text() == ""
 
 
-def test_coverage_template_follows_test_code() -> None:
-    """The coverage wrapper triggers on completion of the workflow the
-    test_code wrapper names, and grants the token what the cross-run
-    artifact download needs."""
-    test_code_name = _template("test_code.yml")["name"]
-    cov = _template("test_coverage.yml")
-    assert _on(cov) == {
-        "workflow_run": {"workflows": [test_code_name], "types": ["completed"]}
-    }
-    assert cov["jobs"]["coverage"]["permissions"]["actions"] == "read"
-    assert cov["jobs"]["coverage"]["permissions"]["statuses"] == "write"
+def test_coverage_is_a_needs_job_of_test_code() -> None:
+    """The required ``coverage / coverage`` check is the ``coverage`` job of
+    the Test code run itself: caller job ``coverage`` calling a workflow whose
+    job is ``coverage``, after ``test``, with a read-only token."""
+    data = _template("test_code.yml")
+    job = data["jobs"]["coverage"]
+    assert job["needs"] == "test"
+    # A plain needs: job is skipped when a test job fails, and a skipped
+    # required check passes. It must run and fail instead.
+    assert job["if"] == "${{ !cancelled() }}"
+    assert job["permissions"] == {"contents": "read"}
+    assert job["uses"].endswith("/.github/workflows/test_coverage.yml@main")
+    assert "coverage" in _load_yaml(WORKFLOWS_DIR / "test_coverage.yml")["jobs"]
+    assert set(data["jobs"]) == {"test", "coverage"}
+
+
+def test_standalone_coverage_wrapper_is_retired() -> None:
+    from hooks.check_template_drift import DEPRECATED_TEMPLATES, TEMPLATES
+
+    rel = ".github/workflows/test_coverage.yml"
+    assert not (TEMPLATES_DIR / "test_coverage.yml").exists()
+    assert rel not in TEMPLATES
+    assert rel in DEPRECATED_TEMPLATES
+
+
+def test_coverage_reusable_downloads_from_the_same_run() -> None:
+    path = WORKFLOWS_DIR / "test_coverage.yml"
+    data = _load_yaml(path)
+    assert "permissions" not in data, (
+        "a called workflow asking for more than its caller grants fails to "
+        "start; inherit the caller's token instead"
+    )
+    group = data["concurrency"]["group"]
+    assert "github.event.workflow_run.id" in group, (
+        "legacy wrapper: workflow_run always has the default branch as its "
+        "ref; a ref-keyed group would let different PRs' reports cancel each other"
+    )
+    steps = data["jobs"]["coverage"]["steps"]
+    assert not any(
+        line.strip().startswith("make ")
+        for st in steps
+        for line in str(st.get("run", "")).splitlines()
+    ), (
+        "coverage reuses test_code's report; it never re-runs the suite"
+    )
+    download = _step(steps, "Download coverage report from test_code")
+    assert download["uses"].startswith("actions/download-artifact@")
+    assert download["with"] == {"name": "coverage-xml"}
+    assert download["if"] == "github.event_name != 'workflow_run'"
+    assert download["continue-on-error"] is True, (
+        "a missing artifact must reach the check step's explicit error"
+    )
+    assert "github-token" not in download.get("with", {})
+    # Status writes are confined to the legacy workflow_run wrapper.
+    for step in steps:
+        if "statuses" in str(step.get("run", "")):
+            assert "github.event_name == 'workflow_run'" in step["if"]
+
+
+@pytest.mark.parametrize(
+    ("report", "event", "code", "out"),
+    [
+        ('<coverage line-rate="0.425"/>', "pull_request", 0, "Line coverage: 42.5%"),
+        (None, "pull_request", 1, "::error::No coverage report"),
+        ("not xml", "push", 1, "::error::Invalid coverage report (ParseError"),
+        ('<coverage branch-rate="1"/>', "pull_request", 1, "::error::Invalid coverage report (KeyError"),
+        ('<coverage line-rate="nan"/>', "pull_request", 1, "::error::Invalid coverage report"),
+        ('<coverage line-rate="1.5"/>', "pull_request", 1, "outside [0, 1]"),
+        ('<report line-rate="0.5"/>', "pull_request", 1, "not <coverage>"),
+        # Legacy workflow_run wrapper: the verdict is in the commit status,
+        # the run on the default branch must not go red.
+        (None, "workflow_run", 0, "::warning::No coverage report"),
+    ],
+)
+@pytest.mark.parametrize("download", ["success", "failure"])
+def test_coverage_check_fails_on_missing_or_invalid_report(
+    tmp_path: Path, report: str | None, event: str, code: int, out: str, download: str
+) -> None:
+    step = _step(
+        _steps(WORKFLOWS_DIR / "test_coverage.yml", "coverage"), "Check coverage report"
+    )
+    assert step["if"] == "always()"
+    assert step["shell"] == "python3 {0}"
+    if report is not None:
+        (tmp_path / "coverage.xml").write_text(report)
+    summary = tmp_path / "summary.md"
+    script = tmp_path / "check.py"
+    script.write_text(step["run"])
+    proc = subprocess.run(
+        ["python3", str(script)],
+        cwd=tmp_path,
+        env={
+            "GITHUB_EVENT_NAME": event,
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "DOWNLOAD_OUTCOME": download,
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == code, proc.stdout + proc.stderr
+    assert out in proc.stdout
+    assert summary.read_text().startswith("## Test Coverage")
+    # A failed download is surfaced, not silently reported as failed tests.
+    hint = "The download step failed"
+    assert (hint in proc.stdout) == (report is None and download == "failure")
 
 
 @pytest.mark.parametrize(
@@ -833,16 +927,16 @@ def test_coverage_template_follows_test_code() -> None:
         (None, "failure", "failure", "Test code failure, no coverage report"),
     ],
 )
-def test_coverage_reports_required_status_on_tested_commit(
+def test_legacy_wrapper_still_reports_required_status(
     tmp_path: Path,
     report: str | None,
     conclusion: str,
     state: str,
     description: str,
 ) -> None:
-    """A workflow_run job is invisible on the PR, so the step posts the
-    ``coverage / coverage`` context that PDK rulesets require onto the
-    tested head SHA. Run it with a ``gh`` stub that records its arguments."""
+    """Transition path: a PDK repo still carrying the workflow_run wrapper
+    keeps getting ``coverage / coverage`` as a commit status until
+    check-template-drift deletes the wrapper. Run with a ``gh`` stub."""
     steps = _steps(WORKFLOWS_DIR / "test_coverage.yml", "coverage")
     step = _step(steps, "Report coverage status on the tested commit")
     assert step["if"] == "always() && github.event_name == 'workflow_run'"
@@ -878,8 +972,8 @@ def test_coverage_reports_required_status_on_tested_commit(
 def test_coverage_status_soft_fails_without_statuses_permission(
     tmp_path: Path,
 ) -> None:
-    """A wrapper that predates ``statuses: write`` must still get its
-    coverage summary: a refused status post warns instead of failing."""
+    """Transition path: a legacy wrapper that predates ``statuses: write``
+    must still get its coverage summary; a refused post warns, not fails."""
     steps = _steps(WORKFLOWS_DIR / "test_coverage.yml", "coverage")
     run = _step(steps, "Report coverage status on the tested commit")["run"]
     bindir = tmp_path / "bin"
@@ -902,31 +996,6 @@ def test_coverage_status_soft_fails_without_statuses_permission(
     )
     assert proc.returncode == 0, proc.stderr
     assert "::warning::Could not post the coverage status" in proc.stdout
-
-
-def test_coverage_reusable_downloads_instead_of_rerunning() -> None:
-    path = WORKFLOWS_DIR / "test_coverage.yml"
-    data = _load_yaml(path)
-    assert "permissions" not in data, (
-        "a called workflow asking for more than an older wrapper grants "
-        "fails to start; inherit the caller's token instead"
-    )
-    group = data["concurrency"]["group"]
-    assert "github.event.workflow_run.id" in group, (
-        "workflow_run always has the default branch as its ref; a ref-keyed "
-        "group would let different PRs' reports cancel each other"
-    )
-    steps = data["jobs"]["coverage"]["steps"]
-    download = _step(steps, "Download coverage report from Test code")
-    assert download["if"] == "github.event_name == 'workflow_run'"
-    assert "gh run download" in download["run"]
-    assert "coverage-xml" in download["run"]
-    assert "workflow_run.conclusion" not in str(download), (
-        "an unrelated failed job must not hide coverage that test_code uploaded"
-    )
-    # The suite only runs on the transition path (legacy push/PR wrapper).
-    run_tests = _step(steps, "Run tests with coverage")
-    assert run_tests["if"] == "github.event_name != 'workflow_run'"
 
 
 def test_badges_template_follows_test_code_and_keeps_cron() -> None:

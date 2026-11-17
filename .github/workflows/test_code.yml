@@ -87,9 +87,10 @@ jobs:
       - name: Install dependencies
         run: |
           make install
-      # Line coverage rides along on this run of the suite. test_coverage.yml
-      # and update_badges.yml download the coverage-xml artifact uploaded
-      # below instead of running `make test` again.
+      # Line coverage rides along on this run of the suite. The Test code
+      # template's `coverage` job (test_coverage.yml, same run) and
+      # update_badges.yml download the coverage-xml artifact uploaded below
+      # instead of running `make test` again.
       - name: Enable coverage
         id: cov
         run: |
