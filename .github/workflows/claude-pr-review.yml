@@ -81,7 +81,7 @@ jobs:
         # A refused ANTHROPIC_API_KEY (revoked key, billing, limits) must not
         # fail every PR; the next step decides whether this failure counts.
         continue-on-error: true
-        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1
+        uses: anthropics/claude-code-action@6d5ae526d25ce88daa2200be073e1a373167f064 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
