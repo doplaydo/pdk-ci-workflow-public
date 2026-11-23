@@ -7,18 +7,19 @@ treated as an empty layout, so added and deleted GDS files are reported too.
 
 Three kinds of output land in ``--outdir``:
 
-* ``xor/<slug>.xor.gds`` - the XOR shapes, kept on their original
-  layer/datatype so the file opens with the PDK layer properties. One top cell
-  ``<cell>_XOR`` per differing cell. Beside it, ``<slug>.old.gds`` and
-  ``<slug>.new.gds`` so a reviewer can load all three at once.
-* ``report.pdf`` - a summary table followed by one page per differing layer:
-  old versus new in context, and the XOR alone, zoomed to its bounding box.
-* ``png/<slug>__<cell>__<layer>.png`` - the same per-layer figures as standalone
-  images, so a PR comment can show them inline instead of linking a PDF.
+* ``xor/<slug>.gds`` - one file a reviewer can load to see all three results.
+  Top cells are the old layout (``<cell>_OLD``), the new layout
+  (``<cell>_NEW``), and the XOR shapes (``<cell>_XOR``), kept on their original
+  layer/datatype. A side that does not exist is omitted.
+* ``report.pdf`` - a summary table followed by one page per differing layer,
+  with old, new, and the XOR side by side on one shared viewport.
+* ``png/<slug>__<cell>__<layer>.png`` - that same three-panel figure.
+* ``png/<slug>__<cell>__<layer>__xor.png`` - the XOR on its own, zoomed to the
+  difference, so a PR comment can show it separately from the three-panel view.
 * ``summary.md`` / ``summary.json`` - the same numbers for a PR comment or a
   downstream job.
 * ``comment.md`` - ``summary.md`` plus one collapsed section per layer holding
-  its image. Each image is written as ``![...](IMAGE:png/<name>.png)``; the
+  both images. Each image is written as ``![...](IMAGE:png/<name>.png)``; the
   caller uploads the file and rewrites ``IMAGE:<relative path>`` to the hosted
   URL. Lines whose placeholder is still unresolved are meant to be dropped, so
   a failed upload costs an image rather than the whole comment.
@@ -52,7 +53,7 @@ MAX_POLYGONS_PER_PANEL = 20000
 
 ADDED_COLOR = "#d62728"
 REMOVED_COLOR = "#1f77b4"
-UNCHANGED_COLOR = "#999999"
+GEOMETRY_COLOR = "#444444"
 
 # A comment carrying every image of a large diff scrolls forever and is slow to
 # load; past this many the rest stay in the PDF and the comment says so.
@@ -106,9 +107,14 @@ def slugify(relpath: str) -> str:
     return relpath.replace("/", "__").removesuffix(".gds")
 
 
-def image_name(relpath: str, cell: str, layer: str) -> str:
-    """Filename for one layer's figure: unique per (file, cell, layer)."""
+def image_name(relpath: str, cell: str, layer: str, kind: str = "") -> str:
+    """Filename for one layer's figure: unique per (file, cell, layer).
+
+    ``kind`` distinguishes the zoomed XOR image from the three-panel figure.
+    """
     parts = [slugify(relpath), cell, layer]
+    if kind:
+        parts.append(kind)
     stem = "__".join(
         "".join(char if char.isalnum() or char in "-_." else "_" for char in part)
         for part in parts
@@ -370,46 +376,7 @@ def draw_panel(
     return truncated_any
 
 
-def build_layer_figure(relpath: str, cell: str, layer: str, data: dict):
-    """Render one (cell, layer) diff. The caller closes the figure."""
-    dbu = data["dbu"]
-    old_region, new_region = data["old"], data["new"]
-    added, removed = data["added"], data["removed"]
-
-    figure, (left, right) = plt.subplots(1, 2, figsize=(11, 6))
-
-    # Unchanged geometry as a grey backdrop, so the diff is placed in context
-    # rather than floating on an empty canvas.
-    unchanged = new_region & old_region
-    truncated = draw_panel(
-        left,
-        [
-            (unchanged, UNCHANGED_COLOR, 0.35),
-            (removed, REMOVED_COLOR, 0.9),
-            (added, ADDED_COLOR, 0.9),
-        ],
-        dbu,
-        "whole layer (diff in context)",
-    )
-    apply_limits(left, bbox_um([old_region, new_region], dbu))
-    left.legend(
-        handles=[
-            Patch(facecolor=UNCHANGED_COLOR, alpha=0.35, label="unchanged"),
-            Patch(facecolor=REMOVED_COLOR, alpha=0.9, label="removed (old only)"),
-            Patch(facecolor=ADDED_COLOR, alpha=0.9, label="added (new only)"),
-        ],
-        fontsize=7,
-        loc="upper right",
-    )
-
-    truncated |= draw_panel(
-        right,
-        [(removed, REMOVED_COLOR, 0.8), (added, ADDED_COLOR, 0.8)],
-        dbu,
-        "XOR only (zoomed)",
-    )
-    apply_limits(right, bbox_um([added, removed], dbu), pad_ratio=0.15)
-
+def _subtitle(added: kdb.Region, removed: kdb.Region, dbu: float, truncated: bool) -> str:
     added_area = added.area() * dbu * dbu
     removed_area = removed.area() * dbu * dbu
     subtitle = (
@@ -421,10 +388,146 @@ def build_layer_figure(relpath: str, cell: str, layer: str, data: dict):
         subtitle += (
             f"\n(only the first {MAX_POLYGONS_PER_PANEL} polygons per panel are drawn)"
         )
+    return subtitle
+
+
+def _finish_figure(figure, relpath: str, cell: str, layer: str, subtitle: str):
     figure.suptitle(f"{relpath}\n{cell} - layer {layer}", fontsize=11)
-    figure.tight_layout(rect=(0, 0.09, 1, 0.9))
-    figure.text(0.5, 0.025, subtitle, ha="center", va="bottom", fontsize=8)
+    figure.tight_layout(rect=(0, 0.12, 1, 0.88))
+    figure.text(0.5, 0.02, subtitle, ha="center", va="bottom", fontsize=8)
     return figure
+
+
+def draw_xor(axis, added: kdb.Region, removed: kdb.Region, dbu: float, bounds) -> bool:
+    """Draw the XOR. ``bounds`` is the viewport; None zooms to the XOR itself."""
+    truncated = draw_panel(
+        axis,
+        [(removed, REMOVED_COLOR, 0.85), (added, ADDED_COLOR, 0.85)],
+        dbu,
+        "xor",
+    )
+    apply_limits(
+        axis,
+        bounds if bounds is not None else bbox_um([added, removed], dbu),
+        pad_ratio=0.05 if bounds is not None else 0.15,
+    )
+    axis.legend(
+        handles=[
+            Patch(facecolor=REMOVED_COLOR, alpha=0.85, label="removed (old only)"),
+            Patch(facecolor=ADDED_COLOR, alpha=0.85, label="added (new only)"),
+        ],
+        fontsize=7,
+        loc="upper right",
+    )
+    return truncated
+
+
+def build_layer_figure(relpath: str, cell: str, layer: str, data: dict):
+    """Render old, new, and the XOR on one shared viewport. The caller closes it."""
+    dbu = data["dbu"]
+    old_region, new_region = data["old"], data["new"]
+    added, removed = data["added"], data["removed"]
+    bounds = bbox_um([old_region, new_region], dbu)
+
+    figure, (old_axis, new_axis, xor_axis) = plt.subplots(1, 3, figsize=(15, 5.5))
+    truncated = draw_panel(
+        old_axis, [(old_region, GEOMETRY_COLOR, 0.9)], dbu, "old"
+    )
+    apply_limits(old_axis, bounds)
+    truncated |= draw_panel(
+        new_axis, [(new_region, GEOMETRY_COLOR, 0.9)], dbu, "new"
+    )
+    apply_limits(new_axis, bounds)
+    truncated |= draw_xor(xor_axis, added, removed, dbu, bounds)
+    return _finish_figure(
+        figure, relpath, cell, layer, _subtitle(added, removed, dbu, truncated)
+    )
+
+
+def build_xor_figure(relpath: str, cell: str, layer: str, data: dict):
+    """Render the XOR alone, zoomed to the difference. The caller closes it."""
+    dbu = data["dbu"]
+    added, removed = data["added"], data["removed"]
+    figure, axis = plt.subplots(figsize=(6, 5.5))
+    truncated = draw_xor(axis, added, removed, dbu, None)
+    return _finish_figure(
+        figure, relpath, cell, layer, _subtitle(added, removed, dbu, truncated)
+    )
+
+
+def _scale_vector(vector, factor: float):
+    return kdb.Vector(int(round(vector.x * factor)), int(round(vector.y * factor)))
+
+
+def _scale_to_dbu(layout: kdb.Layout, dbu: float) -> None:
+    """Rescale every cell so ``layout`` can share ``dbu`` with another layout.
+
+    Shapes and instance placements are scaled once each. Scaling a whole cell
+    with a magnification would also magnify its children, and those children
+    are scaled themselves.
+    """
+    if math.isclose(layout.dbu, dbu, rel_tol=1e-12):
+        layout.dbu = dbu
+        return
+    factor = layout.dbu / dbu
+    transform = kdb.ICplxTrans(factor)
+    for cell in layout.each_cell():
+        for layer_index in layout.layer_indexes():
+            cell.shapes(layer_index).transform(transform)
+        for inst in list(cell.each_inst()):
+            placed = inst.cplx_trans
+            scaled = kdb.ICplxTrans(
+                placed.mag,
+                placed.angle,
+                placed.is_mirror(),
+                _scale_vector(placed.disp, factor),
+            )
+            prop_id = inst.prop_id
+            inst.cell_inst = kdb.CellInstArray(
+                inst.cell_index,
+                scaled,
+                _scale_vector(inst.a, factor),
+                _scale_vector(inst.b, factor),
+                inst.na,
+                inst.nb,
+            )
+            inst.prop_id = prop_id
+    layout.dbu = dbu
+
+
+def _prefix_cells(layout: kdb.Layout, suffix: str) -> None:
+    for cell in layout.each_cell():
+        cell.name = f"{sanitize_cell_name(cell.name)}_{suffix}"
+
+
+def _copy_tops(dest: kdb.Layout, src: kdb.Layout) -> None:
+    """Copy each top cell of ``src`` into ``dest``, hierarchy included."""
+    for top in src.top_cells():
+        holder = dest.create_cell(top.name)
+        holder.copy_tree(top)
+
+
+def _import_gds(dest: kdb.Layout, path: Path, suffix: str) -> None:
+    if not path.is_file():
+        return
+    src = kdb.Layout()
+    src.read(str(path))
+    _scale_to_dbu(src, dest.dbu)
+    _prefix_cells(src, suffix)
+    _copy_tops(dest, src)
+
+
+def write_review_gds(
+    dest: Path, old_path: Path, new_path: Path, xor_layout: kdb.Layout
+) -> None:
+    """Write old, new, and XOR into one GDS, as ``*_OLD``, ``*_NEW``, ``*_XOR``."""
+    combined = kdb.Layout()
+    combined.dbu = xor_layout.dbu
+    _import_gds(combined, old_path, "OLD")
+    _import_gds(combined, new_path, "NEW")
+    _copy_tops(combined, xor_layout)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    combined.write(str(dest))
 
 
 def ellipsize(text: str, limit: int) -> str:
@@ -505,7 +608,9 @@ def write_markdown(diffs: list[FileDiff], path: Path, artifact_hint: str) -> Non
             )
         lines.append("")
         lines.append(
-            f"Per-layer images and the XOR GDS are in the **{artifact_hint}** artifact."
+            "Each changed file is written as one GDS with `*_OLD`, `*_NEW`, and "
+            "`*_XOR` top cells. The per-layer old/new/xor image and a separate "
+            f"zoomed XOR image are in the **{artifact_hint}** artifact."
         )
     for file_diff in diffs:
         if file_diff.note:
@@ -515,21 +620,22 @@ def write_markdown(diffs: list[FileDiff], path: Path, artifact_hint: str) -> Non
 
 def write_comment(
     summary_md: str,
-    images: list[tuple[str, str, str, str, float]],
+    images: list[tuple[str, str, str, str, str, float]],
     path: Path,
     max_images: int,
 ) -> int:
     """Write the comment body: the summary table plus the per-layer images.
 
-    ``images`` is ``(relpath, cell, layer, image path relative to outdir, total
-    XOR area)`` in report order. Returns how many images were embedded.
+    ``images`` is ``(relpath, cell, layer, old/new/xor image, zoomed XOR image,
+    total XOR area)`` in report order. Both pictures of a layer are posted
+    together. Returns how many layers were embedded.
     """
     if 0 <= max_images < len(images):
         # Which layers to keep is decided by area, so a capped comment shows the
         # largest changes rather than whichever came first; the order they are
         # shown in stays the report's, to match the table above.
         keep = sorted(
-            sorted(range(len(images)), key=lambda i: -images[i][4])[:max_images]
+            sorted(range(len(images)), key=lambda i: -images[i][5])[:max_images]
         )
         shown = [images[i] for i in keep]
     else:
@@ -537,15 +643,22 @@ def write_comment(
     lines = [summary_md.rstrip("\n")]
     if shown:
         lines += ["", "### Per-layer XOR images", ""]
-    for relpath, cell, layer, image, _area in shown:
-        alt = f"{relpath} {cell} layer {layer} XOR"
+    for relpath, cell, layer, combined, xor_image, _area in shown:
         lines += [
             (
                 f"<details><summary><code>{relpath}</code> - <code>{cell}</code> - "
                 f"layer <code>{layer}</code></summary>"
             ),
             "",
-            f"![{alt}]({IMAGE_PLACEHOLDER_PREFIX}{image})",
+            (
+                f"![{relpath} {cell} layer {layer} old, new, and xor]"
+                f"({IMAGE_PLACEHOLDER_PREFIX}{combined})"
+            ),
+            "",
+            (
+                f"![{relpath} {cell} layer {layer} xor]"
+                f"({IMAGE_PLACEHOLDER_PREFIX}{xor_image})"
+            ),
             "",
             "</details>",
             "",
@@ -553,8 +666,9 @@ def write_comment(
     hidden = len(images) - len(shown)
     if hidden:
         lines.append(
-            f"The {len(shown)} largest differences are shown; {hidden} further "
-            "layer image(s) are in the artifact's `report.pdf`."
+            f"The {len(shown)} largest differences are shown, each with an "
+            "old/new/xor image and a separate XOR image; "
+            f"{hidden} further layer(s) are in the artifact's `report.pdf`."
         )
     path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
     return len(shown)
@@ -618,7 +732,10 @@ def main() -> int:
         "--max-images",
         type=int,
         default=DEFAULT_MAX_IMAGES,
-        help="How many layer images to embed in comment.md (-1 for all)",
+        help=(
+            "How many differing layers to illustrate in comment.md. Each layer "
+            "includes the old/new/xor image and a separate XOR image (-1 for all)"
+        ),
     )
     args = parser.parse_args()
 
@@ -645,10 +762,7 @@ def main() -> int:
         diffs.append(file_diff)
         slug = slugify(relpath)
         if xor_layout is not None:
-            xor_layout.write(str(gds_dir / f"{slug}.xor.gds"))
-        for source, suffix in ((old_path, "old"), (new_path, "new")):
-            if source.exists():
-                (gds_dir / f"{slug}.{suffix}.gds").write_bytes(source.read_bytes())
+            write_review_gds(gds_dir / f"{slug}.gds", old_path, new_path, xor_layout)
         for (cell, layer), data in plots.items():
             all_plots.append((relpath, cell, layer, data))
         print(f"XOR differences: {relpath} ({len(plots)} layer(s))")
@@ -660,19 +774,31 @@ def main() -> int:
         for c in f.cells
         for layer in c.layers
     }
-    images: list[tuple[str, str, str, str, float]] = []
+    images: list[tuple[str, str, str, str, str, float]] = []
     with PdfPages(outdir / "report.pdf") as pdf:
         render_summary_pages(pdf, diffs)
         for relpath, cell, layer, data in all_plots:
             figure = build_layer_figure(relpath, cell, layer, data)
             pdf.savefig(figure)
-            # The same figure serves both outputs, so a page and its image can
-            # never disagree.
+            # The PDF page and the three-panel image are the same figure, so
+            # they cannot disagree. The zoomed XOR image is an extra picture
+            # for the PR comment.
             name = image_name(relpath, cell, layer)
             figure.savefig(png_dir / name, dpi=110)
             plt.close(figure)
+            xor_figure = build_xor_figure(relpath, cell, layer, data)
+            xor_name = image_name(relpath, cell, layer, "xor")
+            xor_figure.savefig(png_dir / xor_name, dpi=110)
+            plt.close(xor_figure)
             images.append(
-                (relpath, cell, layer, f"png/{name}", areas[(relpath, cell, layer)])
+                (
+                    relpath,
+                    cell,
+                    layer,
+                    f"png/{name}",
+                    f"png/{xor_name}",
+                    areas[(relpath, cell, layer)],
+                )
             )
 
     write_markdown(diffs, outdir / "summary.md", args.artifact_name)
@@ -690,7 +816,7 @@ def main() -> int:
     )
     if len(images) > embedded:
         print(
-            f"comment.md embeds {embedded} of {len(images)} layer image(s) "
+            f"comment.md embeds {embedded} of {len(images)} layer(s) "
             f"(--max-images {args.max_images}); the rest stay in report.pdf"
         )
     return 0

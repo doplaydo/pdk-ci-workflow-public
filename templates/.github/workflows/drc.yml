@@ -1,6 +1,7 @@
 name: DRC Check
 on:
   workflow_dispatch:
+  pull_request:
   push:
     branches: [main]
 

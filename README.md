@@ -125,8 +125,8 @@ PDK repos reference these workflows via `workflow_call`. Create thin wrapper wor
 | `sample-project-test.yml` | test | One shared suite in editable or released mode, with one `Test <project_dir>` job per project |
 | `pages.yml` | build-docs | Sphinx docs build and Pages artifact upload. The caller's wrapper supplies the `deploy-docs` job that publishes to GitHub Pages |
 | `claude-pr-review.yml` | review | AI code review via Claude Sonnet 4. Runs once on PR open/reopen; re-run on demand by commenting `/claude-api review` |
-| `drc.yml` | drc | Design Rule Check with GFP and badge generation |
-| `gds-xor.yml` | gds-xor | Per-layer XOR of every `*.gds` changed by a PR: a downloadable XOR GDS plus a PDF report with one page per differing layer, and a PR comment showing the difference area in um^2 |
+| `drc.yml` | drc | Design Rule Check with GFP and badge generation. Pull requests also check the base revision and comment whether the change adds or reduces DRC errors |
+| `gds-xor.yml` | gds-xor | Per-layer XOR of every `*.gds` changed by a PR: one GDS holding the old layout, the new layout, and the XOR, plus a PDF page per differing layer with those three views side by side |
 | `issue.yml` | add-label | Auto-labels issues with "pdk" tag |
 | `test_coverage.yml` | coverage | Line coverage check for a Test code run, read from its `coverage-xml` artifact (no second test run); called as the `coverage` job of the Test code template and fails on failed tests or a missing/invalid report |
 | `model_coverage.yml` | model-coverage | PDK model-to-cell coverage check |
@@ -297,8 +297,8 @@ Reference configuration files are provided in `templates/` for onboarding new PD
 | `.github/workflows/sample-projects-editable.yml` | Shared sample suite against the editable PDK on PRs, pushes to `main`, and dispatch; conditionally deployed when `*--sample-projects/` exists |
 | `.github/workflows/pages.yml` | Sphinx docs build and GitHub Pages deployment |
 | `.github/workflows/claude-pr-review.yml` | AI code review via Claude — runs once on PR open/reopen; re-run on demand with `/claude-api review` comment |
-| `.github/workflows/drc.yml` | Design Rule Check via GFP |
-| `.github/workflows/gds-xor.yml` | Per-layer XOR report for GDS files changed by a PR |
+| `.github/workflows/drc.yml` | Design Rule Check via GFP, including a pull-request comparison against the base revision |
+| `.github/workflows/gds-xor.yml` | Per-layer XOR report for GDS files changed by a PR, with old, new, and XOR in one file |
 | `.github/workflows/issue.yml` | Auto-label PDK issues |
 | `.github/workflows/model_coverage.yml` | PDK model-to-cell coverage check |
 | `.github/workflows/model_regression.yml` | Model-specific regression tests |

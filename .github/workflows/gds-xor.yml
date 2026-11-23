@@ -21,7 +21,12 @@ on:
         type: number
         required: false
         default: 12
-        description: 'How many per-layer XOR images to embed in the comment (-1 for all)'
+        description: 'How many differing layers to illustrate. Each one includes the old/new/xor image and a separate XOR image (-1 for all)'
+      script_ref:
+        type: string
+        required: false
+        default: 'main'
+        description: 'Git ref of pdk-ci-workflow to download gds_xor_report.py from'
 permissions:
   contents: read
   pull-requests: write
@@ -78,8 +83,10 @@ jobs:
       - name: Download gds_xor_report script
         if: ${{ !steps.changed.outputs.skip_reason }}
         run: |
-          curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/main/scripts/gds_xor_report.py" \
+          curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/$SCRIPT_REF/scripts/gds_xor_report.py" \
             -o gds_xor_report.py
+        env:
+          SCRIPT_REF: ${{ inputs.script_ref }}
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         if: ${{ !steps.changed.outputs.skip_reason }}
         with:
@@ -122,94 +129,76 @@ jobs:
         run: |
           set -euo pipefail
           marker="<!-- gds-xor-report -->"
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"$marker\")) | .id")
 
-          if [ -z "$SKIP_REASON" ]; then
-            # There is no first-party API for comment attachments; this is the
-            # endpoint the web UI uses when an image is dragged into a comment,
-            # and the only host whose URLs render inline for a private repo.
-            # Being undocumented, every failure here is non-fatal: the image is
-            # dropped and the table still gets posted. That has to hold for the
-            # plumbing around the upload too - nothing between here and the
-            # comment may abort the step under `set -e`, or a hiccup costs the
-            # whole report instead of one image.
-            upload_token="${UPLOAD_TOKEN:-}"
-            [ -n "$upload_token" ] || upload_token="$GH_TOKEN"
-            repo_id=$(gh api "repos/$GITHUB_REPOSITORY" --jq .id || true)
-            : > uploads.tsv
-            grep -o 'IMAGE:[^)]*' build/gds-xor/comment.md | sed 's/^IMAGE://' | sort -u \
-              > wanted.txt || true
-            while IFS= read -r rel; do
-              [ -n "$rel" ] || continue
-              # Bounded: a stalled connection to an undocumented endpoint must
-              # not hold the job open to the runner timeout.
-              response=$(curl -sS -X POST --max-time 60 --retry 2 \
-                --data-binary "@build/gds-xor/$rel" \
-                -H "Authorization: Bearer $upload_token" \
-                -H "Accept: application/json" \
-                "https://uploads.github.com/user-attachments/assets?name=$(basename "$rel")&content_type=image/png&repository_id=$repo_id" \
-                || true)
-              url=$(printf '%s' "$response" \
-                | grep -oE 'https://github\.com/user-attachments/assets/[A-Za-z0-9-]+' \
-                | head -1 || true)
-              if [ -n "$url" ]; then
-                printf '%s\t%s\n' "$rel" "$url" >> uploads.tsv
+          # Writes the comment body to comment.md. With an argument, each image
+          # line is replaced by that note instead of pointing at the local PNG.
+          compose() {
+            {
+              echo "$marker"
+              if [ -n "$SKIP_REASON" ]; then
+                echo "## GDS XOR report"
+                echo
+                echo "Not generated: $SKIP_REASON."
               else
-                echo "::warning::could not upload $rel; its image is omitted from the comment"
-              fi
-            done < wanted.txt
-            echo "Uploaded $(wc -l < uploads.tsv | tr -d ' ') of $(wc -l < wanted.txt | tr -d ' ') image(s)"
-
-            # `if` rather than a bare call: under `set -e` a crash in here would
-            # otherwise kill the step instead of falling back to the table.
-            if python3 - build/gds-xor/comment.md uploads.tsv > resolved.tmp <<'PY'
+                python3 - build/gds-xor/comment.md "${1:-}" <<'PY' || cat build/gds-xor/summary.md
           import sys
 
-          body, table = sys.argv[1], sys.argv[2]
-          urls = dict(
-              line.rstrip("\n").split("\t", 1)
-              for line in open(table, encoding="utf-8")
-              if "\t" in line
-          )
+          body, note = sys.argv[1], sys.argv[2]
           for line in open(body, encoding="utf-8"):
               if "](IMAGE:" in line:
                   rel = line.split("](IMAGE:", 1)[1].rsplit(")", 1)[0]
-                  # An image that failed to upload says so, rather than leaving
-                  # a broken placeholder behind.
-                  line = (
-                      line.replace("IMAGE:" + rel, urls[rel])
-                      if rel in urls
-                      else "_(image upload failed; this layer's page is in the PDF)_\n"
-                  )
+                  line = note + "\n" if note else line.replace("IMAGE:" + rel, "./build/gds-xor/" + rel)
               sys.stdout.write(line)
           PY
-            then
-              mv resolved.tmp resolved.md
-            else
-              echo "::warning::could not assemble the image sections; posting the table alone"
-              cp build/gds-xor/summary.md resolved.md
-            fi
+                echo
+                echo "[Download the old/new/XOR GDS and the PDF report]($RUN_URL) (artifact \`gds-xor-report\`)."
+              fi
+            } > comment.md
+          }
+
+          attach=()
+          if [ -z "$SKIP_REASON" ]; then
+            while IFS= read -r rel; do
+              [ -n "$rel" ] && attach+=(--attach "./build/gds-xor/$rel")
+            done < <(grep -o 'IMAGE:[^)]*' build/gds-xor/comment.md | sed 's/^IMAGE://' | sort -u || true)
           fi
 
-          {
-            echo "$marker"
-            if [ -n "$SKIP_REASON" ]; then
-              echo "## GDS XOR report"
-              echo
-              echo "Not generated: $SKIP_REASON."
-            else
-              cat resolved.md
-              echo
-              echo "[Download the XOR GDS and the PDF report]($RUN_URL) (artifact \`gds-xor-report\`)."
+          if [ "${#attach[@]}" -gt 0 ]; then
+            # `gh --attach` uploads each PNG as a comment attachment and rewrites
+            # the matching `./build/gds-xor/...` references to the uploaded URLs.
+            # Attachments are attributed to a user with write access, so the PAT
+            # goes first and the Actions token is the fallback. gh cannot attach
+            # to an edit, so a new comment is posted and the old one removed.
+            compose
+            posted=""
+            for token in "${UPLOAD_TOKEN:-}" "$GH_TOKEN"; do
+              [ -n "$token" ] || continue
+              if GH_TOKEN="$token" gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" \
+                --body-file comment.md "${attach[@]}" 2> attach.err; then
+                posted=1
+                break
+              fi
+              echo "::warning::gh pr comment --attach failed: $(tr '\n' ' ' < attach.err)"
+            done
+            if [ -n "$posted" ]; then
+              echo "Posted a new comment with $(( ${#attach[@]} / 2 )) image(s)"
+              for id in $existing; do
+                gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/comments/$id" > /dev/null || true
+              done
+              exit 0
             fi
-          } > comment.md
+            compose "_(image upload failed; this layer's page is in the PDF)_"
+          else
+            compose
+          fi
 
-          existing=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
-            --jq "[.[] | select(.body | startswith(\"$marker\")) | .id] | first // empty")
-
-          if [ -n "$existing" ]; then
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" \
+          first=$(head -n1 <<<"$existing")
+          if [ -n "$first" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$first" \
               -F body=@comment.md > /dev/null
-            echo "Updated comment $existing"
+            echo "Updated comment $first"
           elif [ -n "$SKIP_REASON" ]; then
             # Nothing to say and nothing to correct: don't open with noise.
             echo "Nothing to report and no existing comment; staying quiet"

@@ -35,7 +35,7 @@ jobs:
         env:
           SCRIPT_REF: ${{ inputs.script_ref }}
         run: |
-          for script in build_cell.py drc_project.py; do
+          for script in build_cell.py drc_project.py drc_delta.py; do
             curl -fsSL "https://raw.githubusercontent.com/doplaydo/pdk-ci-workflow-public/$SCRIPT_REF/scripts/$script" \
               -o "$script"
           done
@@ -87,6 +87,123 @@ jobs:
           if api_key and log.is_file():
               log.write_bytes(log.read_bytes().replace(api_key, b"***"))
           PY
+      - name: Compare DRC against the base revision
+        # A second full build and DRC, so the comment can say whether this pull
+        # request adds or removes violations. The base run is allowed to fail:
+        # the head result above is still the job's result. Forks can run this;
+        # only the comment below needs write access.
+        if: always() && github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          DRC_PROJECT: ${{ steps.drc-project.outputs.slug }}
+        run: |
+          set -euo pipefail
+          head_dir="$RUNNER_TEMP/drc-head"
+          base_dir="$RUNNER_TEMP/drc-base"
+          mkdir -p "$head_dir" "$base_dir" build/drc-compare
+          cp -a build/lyrdb/all_cells.lyrdb "$head_dir/" 2>/dev/null || true
+          cp -a build/gds/all_cells.gds "$head_dir/" 2>/dev/null || true
+          cp -a build/drc.log "$head_dir/" 2>/dev/null || true
+
+          published=0
+          publish() {
+            if [ "$published" -eq 1 ]; then
+              return 0
+            fi
+            published=1
+            mkdir -p build/lyrdb build/gds build/drc-compare
+            if [ -f "$base_dir/all_cells.lyrdb" ]; then
+              cp "$base_dir/all_cells.lyrdb" build/drc-compare/all_cells_base.lyrdb
+            fi
+            if [ -f "$base_dir/all_cells.gds" ]; then
+              cp "$base_dir/all_cells.gds" build/drc-compare/all_cells_base.gds
+            fi
+            if [ -f "$base_dir/drc.log" ]; then
+              cp "$base_dir/drc.log" build/drc-compare/drc_base.log
+            fi
+            if [ -f "$head_dir/all_cells.lyrdb" ]; then
+              cp "$head_dir/all_cells.lyrdb" build/lyrdb/all_cells.lyrdb
+            fi
+            if [ -f "$head_dir/all_cells.gds" ]; then
+              cp "$head_dir/all_cells.gds" build/gds/all_cells.gds
+            fi
+            if [ -f "$head_dir/drc.log" ]; then
+              cp "$head_dir/drc.log" build/drc.log
+            fi
+          }
+          trap publish EXIT
+
+          run_base() {
+            # `|| return` so a base failure leaves the function instead of the
+            # step. The caller turns errexit off around the call; do not turn
+            # it back on in here, or a later failure skips the delta comment.
+            git fetch --depth=1 origin "$BASE_SHA" || return 1
+            git checkout -f "$BASE_SHA" || return 1
+            rm -rf build
+            uv sync --all-extras -P gdsfactoryplus || return 1
+            uv run gfp configure --api-key "$GFP_API_KEY" --uv || return 1
+            skip_args=""
+            skip_file=$(find . -name build_cell_skip.txt -not -path './.venv/*' -print -quit)
+            if [ -n "$skip_file" ]; then
+              skip_args="--skip $(grep -v '^\s*#' "$skip_file" | grep -v '^\s*$' | tr '\n' ' ')"
+            fi
+            # shellcheck disable=SC2086
+            uv run python build_cell.py all_cells $skip_args || return 1
+            mkdir -p build/lyrdb
+            project=()
+            if [ -n "${DRC_PROJECT:-}" ]; then project=(--project "$DRC_PROJECT"); fi
+            uv run gfp check drc build/gds/all_cells.gds "${project[@]}" \
+              --outpath build/lyrdb/all_cells.lyrdb 2>&1 | tee build/drc.log
+            drc_status=${PIPESTATUS[0]}
+            mkdir -p "$base_dir"
+            cp build/lyrdb/all_cells.lyrdb "$base_dir/" 2>/dev/null || true
+            cp build/gds/all_cells.gds "$base_dir/" 2>/dev/null || true
+            cp build/drc.log "$base_dir/" 2>/dev/null || true
+            if [ ! -s "$base_dir/all_cells.lyrdb" ]; then
+              echo "Base DRC produced no report (gfp exit ${drc_status})."
+              return 1
+            fi
+          }
+
+          if [ ! -s "$head_dir/all_cells.lyrdb" ]; then
+            echo "Head DRC report is missing; not running DRC on the base."
+          else
+            # set +e around the call: a base failure must not hide the head result.
+            set +e
+            run_base
+            echo "Base DRC comparison exited $?"
+            set -e
+          fi
+          publish
+          # Heredoc terminator has to sit at the script's left edge, so this
+          # redaction stays outside run_base.
+          if [ -f build/drc-compare/drc_base.log ]; then
+            python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          api_key = os.environ.get("GFP_API_KEY", "").encode()
+          log = Path("build/drc-compare/drc_base.log")
+          if api_key and log.is_file():
+              log.write_bytes(log.read_bytes().replace(api_key, b"***"))
+          PY
+          fi
+          # The project environment has klayout (via gdsfactory), which
+          # drc_delta.py uses to say which layout each error sits in. Without
+          # it the comment still lists the categories.
+          py=(python3)
+          if uv run --no-sync python -c "import klayout.db" 2>/dev/null; then
+            py=(uv run --no-sync python)
+          fi
+          "${py[@]}" drc_delta.py \
+            --base build/drc-compare/all_cells_base.lyrdb \
+            --head build/lyrdb/all_cells.lyrdb \
+            --base-gds build/drc-compare/all_cells_base.gds \
+            --head-gds build/gds/all_cells.gds \
+            --out build/drc-compare/drc-delta.md
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            cat build/drc-compare/drc-delta.md >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Upload DRC report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -97,6 +214,14 @@ jobs:
             build/gds/all_cells.gds
             build/drc.log
           retention-days: 3
+      - name: Upload base DRC comparison
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: drc-base-comparison
+          path: build/drc-compare/
+          retention-days: 3
+          if-no-files-found: warn
       - name: Create DRC badge
         if: always()
         run: |
@@ -136,8 +261,45 @@ jobs:
               summary.write(f"### DRC\n\nViolation count: **{value}**.\n")
           raise SystemExit(1 if value == "unavailable" else 0)
           PY
+      - name: Comment on DRC error change
+        # A pull_request run from a fork gets a read-only token, so the comment
+        # would fail; the artifact still holds the comparison.
+        if: >-
+          always()
+          && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          marker="<!-- drc-delta -->"
+          {
+            echo "$marker"
+            if [ -f build/drc-compare/drc-delta.md ]; then
+              cat build/drc-compare/drc-delta.md
+            else
+              echo "## DRC error change"
+              echo
+              echo "Comparison did not run."
+            fi
+          } > comment.md
+
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
+            --jq "[.[] | select(.body | startswith(\"$marker\")) | .id] | first // empty")
+          if [ -n "$existing" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" \
+              -F body=@comment.md > /dev/null
+            echo "Updated comment $existing"
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+              -F body=@comment.md > /dev/null
+            echo "Posted a new comment"
+          fi
       - name: Commit DRC badge
-        if: always()
+        # Pull requests report a delta in the comment above. Publishing the
+        # badge from a PR would replace the default-branch count.
+        if: always() && github.event_name != 'pull_request'
         run: |
           if [ ! -f badges/drc.svg ]; then
             echo "::error::DRC badge generation did not produce an SVG."
