@@ -194,6 +194,16 @@
     PR regenerates the lock. Warns (doesn't fail) when uv can't be run.
     No-ops when uv.lock is absent.
 
+- id: check-no-new-changelog-fragments
+  name: Reject new changelog fragments
+  entry: check_no_new_changelog_fragments
+  language: python
+  always_run: true
+  pass_filenames: false
+  description: >-
+    Rejects new .changelog.d paths in the downstream PDK, allowing the canonical
+    template and pre-existing entries. Uses Git history and the staged index.
+
 - id: check-zensical-nav
   name: Check zensical.toml nav for dead entries
   entry: check_zensical_nav

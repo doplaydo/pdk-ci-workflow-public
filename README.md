@@ -239,8 +239,8 @@ Read from `vars.` in the wrapper, set per PDK repo. Not secrets, and not forward
 
 Two types of hooks are defined in `.pre-commit-hooks.yaml`:
 
-- **18 PDK compliance hooks** (`hooks/*.py`) — validate repo structure, cells, tech, tests, etc.
-- **11 third-party wrapper hooks** — ruff, pydocstyle, codespell, nbstripout, trailing-whitespace, etc. with versions pinned via `additional_dependencies` so they're controlled centrally
+- **PDK compliance hooks** (`hooks/*.py`) — validate repo structure, cells, tech, tests, etc.
+- **Third-party wrapper hooks** — ruff, pydocstyle, codespell, nbstripout, trailing-whitespace, etc. with versions pinned via `additional_dependencies` so they're controlled centrally
 
 All hooks use `always_run: true` and `pass_filenames: false` (repo-level checks). Errors = failure, warnings = pass but alert.
 
@@ -275,6 +275,7 @@ See [`hooks/README.md`](hooks/README.md) for detailed documentation.
 | `check-makefile-targets` | Required targets (install, test) and recommended targets (docs, build, test-force, update-pre, dev). Auto-fix: rewrites `dev` target's stale pre-commit-config fetch to `curl` against the public repo (exit 1; re-run exits 0) |
 | `check-workflows` | `.github/workflows/` has test_code.yml with pre-commit and test jobs |
 | `check-precommit-config` | `.pre-commit-config.yaml` includes required hooks (trailing-whitespace, end-of-file-fixer, ruff or ruff-lint, ruff-format, pydocstyle) |
+| `check-no-new-changelog-fragments` | Rejects new entries in the root `.changelog.d/`, except the canonical template. Existing entries are not rejected; release notes use PR titles and labels. |
 | `check-template-drift` | `.github/dependabot.yml` and `.github/workflows/*.yml` thin callers match upstream templates. Auto-fixes by rewriting or creating files. Conditionally deploys `sample-projects-editable.yml` and `sample-projects-released.yml` in repos containing `*--sample-projects/` directories. Deletes deprecated templates (listed in `DEPRECATED_TEMPLATES`) if still present. |
 
 #### Multi-band
