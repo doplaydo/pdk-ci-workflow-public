@@ -11,6 +11,8 @@
   description: >
     Verifies required files (README.md, LICENSE, Makefile, pyproject.toml,
     .pre-commit-config.yaml, tests/, workflows) exist at repo root.
+    Auto-creates a missing __init__.py in each sample project's samples/
+    package directory.
 
 - id: check-pyproject-sections
   name: Validate pyproject.toml sections

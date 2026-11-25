@@ -100,6 +100,29 @@ def test_drc_logs_and_failure_status(tmp_path, exit_code, has_report, expected):
         assert f"DRC command exited with code {exit_code}" in result.stdout
 
 
+def test_pull_request_compares_base_and_keeps_the_badge_on_the_default_branch():
+    template = yaml.safe_load(
+        (WORKFLOW.parents[2] / "templates/.github/workflows/drc.yml").read_text()
+    )
+    triggers = template[True]
+    assert "pull_request" in triggers
+    assert triggers["push"]["branches"] == ["main"]
+
+    private = {
+        s.get("name"): s
+        for s in yaml.safe_load(WORKFLOW.read_text())["jobs"]["drc"]["steps"]
+    }
+    compare = private["Compare DRC against the base revision"]
+    assert "drc_delta.py" in compare["run"]
+    assert "github.event_name == 'pull_request'" in compare["if"]
+    download = private["Download helper scripts"]["run"]
+    assert "drc_delta.py" in download
+    badge = private["Commit DRC badge"]
+    assert "github.event_name != 'pull_request'" in badge["if"]
+    comment = private["Comment on DRC error change"]
+    assert "drc-delta" in comment["run"]
+
+
 def test_drc_log_redacts_api_key(tmp_path):
     log = tmp_path / "build/drc.log"
     log.parent.mkdir()

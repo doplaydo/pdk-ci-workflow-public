@@ -16,8 +16,8 @@ The docs workflow accepts an optional `runner` input, defaulting to `ubuntu-late
 | `sample-project-test.yml` | test | `GFP_API_KEY` (optional) | Shared per-project suite with editable or released PDK; publishes passed-test artifacts only |
 | `pages.yml` | build-docs | `GFP_API_KEY`, `SIMCLOUD_APIKEY` | Sphinx docs build and Pages artifact upload. The caller's wrapper adds the `deploy-docs` job |
 | `claude-pr-review.yml` | review | `ANTHROPIC_API_KEY` | AI code review via Claude Sonnet 4. Auto-runs on PR open/reopen; re-runs only when a human posts `/claude-api review` on the PR |
-| `drc.yml` | drc | `GFP_API_KEY` | Design Rule Check with badge generation |
-| `gds-xor.yml` | gds-xor | `GITHUB_TOKEN` | Per-layer XOR of every `*.gds` a PR changes: uploads the XOR GDS plus a PDF report with one page per differing layer, and posts a sticky comment with the difference area in um^2. Inline images need an attachment upload, which is attributed to a user account, so with only `GITHUB_TOKEN` the comment links the PDF instead |
+| `drc.yml` | drc | `GFP_API_KEY` | Design Rule Check with badge generation. On a pull request, also runs the base revision and comments whether the change adds or reduces DRC errors |
+| `gds-xor.yml` | gds-xor | `GITHUB_TOKEN` | Per-layer XOR of every `*.gds` a PR changes: uploads one GDS holding the old layout, the new layout, and the XOR, plus a PDF page per differing layer with those three views side by side, and posts a sticky comment with the difference area in um^2. Inline images need an attachment upload, which is attributed to a user account, so with only `GITHUB_TOKEN` the comment links the PDF instead |
 | `code-security.yml` | semgrep, trivy | — | Semgrep (`p/ci`, `p/secrets`) and Trivy (vuln, misconfig, secret; HIGH/CRITICAL with a fix available) filesystem scans with public tooling and read-only access. Findings fail the job and are published to the job summary and as artifacts. To accept a finding, use repo-local suppression: `.trivyignore` (CVE IDs), `.semgrepignore` (paths), or inline `# nosemgrep: <rule-id>` |
 | `issue.yml` | add-label | `GITHUB_TOKEN` | Auto-labels issues with the `pdk` tag plus a per-repository `pdk:<repo-name>` tag |
 | `test_coverage.yml` | coverage | none (the Test code template grants `contents: read`) | The required `coverage / coverage` check. Called by the Test code template as `coverage` (`needs: test`, `if: !cancelled()`), it downloads the `coverage-xml` artifact test_code uploaded in the same run and fails if the tests failed or the report is missing or invalid. A legacy `workflow_run` wrapper (needs `actions: read`, `statuses: write`) still gets the old commit-status report until `check-template-drift` deletes it |
@@ -49,6 +49,14 @@ resolve their project with `scripts/drc_project.py` and pass it to
 `gfp check drc --project`; no CI identifier is written to any `pyproject.toml`.
 `drc.yml` takes `script_ref` (default `main`) to download that script from
 another ref of this repo.
+
+On a pull request the job runs that check twice: once on the head, then again
+on the base revision. It comments the difference in violation count, by
+category, and uploads the base report as `drc-base-comparison`. The comparison
+is informational. An increase does not add a failure beyond the head run's own
+result, and the `badges` branch is still updated only outside pull requests, so
+the badge stays the default-branch count. The template caller opts in with a
+`pull_request` trigger; a caller that only runs on `push` never sees the delta.
 
 | Artifact (7-day retention) | Contents |
 |---|---|

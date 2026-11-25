@@ -66,3 +66,17 @@ class TestCheckRequiredFiles:
         (pdk_root / ".changelog.d" / "changelog_template.jinja").unlink()
         # Hook should still pass (warnings only)
         assert main() == 0
+
+    def test_samples_init_created(self, pdk_root: Path) -> None:
+        """A sample project's samples/ dir without __init__.py is fixed, then passes."""
+        samples = pdk_root / "x--sample-projects" / "x--project" / "myx" / "samples"
+        samples.mkdir(parents=True)
+        assert main() == 1
+        assert (samples / "__init__.py").read_text() == '"""Sample cells."""\n'
+        assert main() == 0
+
+    def test_samples_init_present_passes(self, pdk_root: Path) -> None:
+        samples = pdk_root / "x--sample-projects" / "x--project" / "myx" / "samples"
+        samples.mkdir(parents=True)
+        (samples / "__init__.py").touch()
+        assert main() == 0

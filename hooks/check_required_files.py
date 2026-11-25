@@ -27,6 +27,13 @@ TEST_WORKFLOW_CANDIDATES = [
     ".github/workflows/test.yml",
 ]
 
+# Sample-project ``samples/`` directories must be Python packages. A missing
+# ``__init__.py`` is created (ruff-style auto-fix) and reported as an error, so
+# the first run fails and the re-run passes. It carries a docstring so ruff's
+# D104 (missing docstring in public package) does not flag it.
+SAMPLES_INIT_GLOB = "*--sample-projects/*/*/samples"
+SAMPLES_INIT_CONTENT = '"""Sample cells."""\n'
+
 RECOMMENDED_FILES = [
     ".gitattributes",
     ".changelog.d/changelog_template.jinja",
@@ -49,6 +56,12 @@ def main() -> int:
         result.error(
             "Required workflow missing: .github/workflows/test_code.yml (or test.yml)"
         )
+
+    for samples in sorted(Path().glob(SAMPLES_INIT_GLOB)):
+        init = samples / "__init__.py"
+        if samples.is_dir() and not init.exists():
+            init.write_text(SAMPLES_INIT_CONTENT, encoding="utf-8")
+            result.error(f"Created missing {init}")
 
     for f in RECOMMENDED_FILES:
         if not Path(f).exists():
