@@ -28,7 +28,27 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: uv sync --all-extras -P gdsfactoryplus
+        run: |
+          # UV_LOCK_UNTRACKED repos resolve the private index from GFP_API_KEY.
+          # The URL contains the organization id, so it cannot be committed.
+          if grep -q '^UV_LOCK_UNTRACKED[[:space:]]*:=' Makefile 2>/dev/null; then
+            index_env="$(make -s export-index)" || exit $?
+            eval "$index_env"
+            if [ -n "${UV_INDEX:-}" ]; then
+              {
+                echo "UV_INDEX<<EOF"
+                echo "$UV_INDEX"
+                echo "EOF"
+                echo "UV_INDEX_GDSFACTORY_PLUS_USERNAME<<EOF"
+                echo "$UV_INDEX_GDSFACTORY_PLUS_USERNAME"
+                echo "EOF"
+                echo "UV_INDEX_GDSFACTORY_PLUS_PASSWORD<<EOF"
+                echo "$UV_INDEX_GDSFACTORY_PLUS_PASSWORD"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+            fi
+          fi
+          uv sync --all-extras -P gdsfactoryplus
       - name: Configure gfp
         run: uv run gfp configure --api-key ${{ secrets.GFP_API_KEY }} --uv
       - name: Download helper scripts

@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 
 from hooks._utils import CheckResult, is_self_repo
-from hooks.check_uv_lock_tracked import _uses_uv
+from hooks.check_uv_lock_tracked import _uses_uv, lock_commit_skipped
 
 LOCK_FILE = "uv.lock"
 
@@ -87,6 +87,9 @@ def main() -> int:
     result = CheckResult("check-uv-lock-sync")
 
     if is_self_repo():
+        return result.report()
+
+    if lock_commit_skipped():
         return result.report()
 
     if not Path(LOCK_FILE).exists():

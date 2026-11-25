@@ -26,6 +26,17 @@ class TestCheckUvLockSync:
         assert not (pdk_root / "uv.lock").exists()
         assert main() == 0
 
+    def test_untracked_marker_skips_even_when_lock_would_fail(
+        self, pdk_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        makefile = pdk_root / "Makefile"
+        makefile.write_text(makefile.read_text() + "\nUV_LOCK_UNTRACKED := 1\n")
+        (pdk_root / "uv.lock").write_text("version = 1\n")
+        monkeypatch.setattr(
+            check_uv_lock_sync, "_uv_lock_check", lambda *a, **k: (1, "drift")
+        )
+        assert main() == 0
+
     def test_in_sync_lock_passes(
         self, pdk_root: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

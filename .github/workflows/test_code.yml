@@ -173,7 +173,27 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - name: Install dependencies (no dev)
-        run: uv sync --no-dev
+        run: |
+          # UV_LOCK_UNTRACKED repos resolve the private index from GFP_API_KEY.
+          # The URL contains the organization id, so it cannot be committed.
+          if grep -q '^UV_LOCK_UNTRACKED[[:space:]]*:=' Makefile 2>/dev/null; then
+            index_env="$(make -s export-index)" || exit $?
+            eval "$index_env"
+            if [ -n "${UV_INDEX:-}" ]; then
+              {
+                echo "UV_INDEX<<EOF"
+                echo "$UV_INDEX"
+                echo "EOF"
+                echo "UV_INDEX_GDSFACTORY_PLUS_USERNAME<<EOF"
+                echo "$UV_INDEX_GDSFACTORY_PLUS_USERNAME"
+                echo "EOF"
+                echo "UV_INDEX_GDSFACTORY_PLUS_PASSWORD<<EOF"
+                echo "$UV_INDEX_GDSFACTORY_PLUS_PASSWORD"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+            fi
+          fi
+          uv sync --no-dev
       - name: Install gdsfactoryplus
         run: uv export --frozen --no-hashes | grep '^gdsfactoryplus' | xargs uv pip install
       - name: Test with gfp test (no dev deps)

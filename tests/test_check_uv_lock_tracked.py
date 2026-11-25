@@ -24,6 +24,22 @@ class TestCheckUvLockTracked:
         assert not (pdk_root / "uv.lock").exists()
         assert main() == 1
 
+    def test_untracked_marker_skips_missing_lock(self, pdk_root: Path) -> None:
+        """An organization-specific index must not be pinned by a lock file."""
+        makefile = pdk_root / "Makefile"
+        makefile.write_text(makefile.read_text() + "\nUV_LOCK_UNTRACKED := 1\n")
+        assert not (pdk_root / "uv.lock").exists()
+        assert main() == 0
+
+    def test_untracked_marker_skips_present_untracked_lock(
+        self, pdk_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        makefile = pdk_root / "Makefile"
+        makefile.write_text(makefile.read_text() + "\nUV_LOCK_UNTRACKED := 1\n")
+        (pdk_root / "uv.lock").write_text("version = 1\n")
+        monkeypatch.setattr(check_uv_lock_tracked, "_git_ls_files", lambda *a, **k: "")
+        assert main() == 0
+
     def test_missing_lock_file_skipped_for_non_uv_repo(self, pdk_root: Path) -> None:
         """A pip-based install target isn't forced to adopt uv.lock."""
         makefile = pdk_root / "Makefile"
