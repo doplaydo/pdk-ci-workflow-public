@@ -242,9 +242,21 @@ def test_main_writes_report_xor_gds_and_summaries(roots, monkeypatch):
     )
 
     assert (out / "report.pdf").exists()
-    assert (out / "xor" / "a.xor.gds").exists()
-    assert (out / "xor" / "a.old.gds").exists()
-    assert (out / "xor" / "a.new.gds").exists()
+    review = out / "xor" / "a.gds"
+    assert review.exists()
+    assert not (out / "xor" / "a.xor.gds").exists()
+    assert not (out / "xor" / "a.old.gds").exists()
+    assert not (out / "xor" / "a.new.gds").exists()
+    layout = kdb.Layout()
+    layout.read(str(review))
+    assert sorted(cell.name for cell in layout.top_cells()) == [
+        "TOP_NEW",
+        "TOP_OLD",
+        "TOP_XOR",
+    ]
+    assert _layer_area(layout, "TOP_OLD") == pytest.approx(1.0)
+    assert _layer_area(layout, "TOP_NEW") == pytest.approx(2.0)
+    assert _layer_area(layout, "TOP_XOR") == pytest.approx(1.0)
 
     payload = json.loads((out / "summary.json").read_text())
     assert payload[0]["file"] == "a.gds"
@@ -253,11 +265,16 @@ def test_main_writes_report_xor_gds_and_summaries(roots, monkeypatch):
     summary = (out / "summary.md").read_text()
     assert "`a.gds`" in summary
     assert "gds-xor-report" in summary
+    assert "`*_OLD`" in summary
 
     images = sorted(p.name for p in (out / "png").iterdir())
-    assert images == ["a__TOP__1_0.png"]
+    assert images == ["a__TOP__1_0.png", "a__TOP__1_0__xor.png"]
     comment = (out / "comment.md").read_text()
-    assert "![a.gds TOP layer 1/0 XOR](IMAGE:png/a__TOP__1_0.png)" in comment
+    assert (
+        "![a.gds TOP layer 1/0 old, new, and xor](IMAGE:png/a__TOP__1_0.png)"
+        in comment
+    )
+    assert "![a.gds TOP layer 1/0 xor](IMAGE:png/a__TOP__1_0__xor.png)" in comment
     # The comment carries the table too, so it can be posted on its own.
     assert "`a.gds`" in comment
 
@@ -285,7 +302,7 @@ def test_main_still_writes_an_empty_report_when_nothing_differs(roots, monkeypat
     )
 
     assert (out / "report.pdf").exists()
-    assert not (out / "xor" / "a.xor.gds").exists()
+    assert not (out / "xor" / "a.gds").exists()
     assert "No XOR differences found" in (out / "summary.md").read_text()
     assert json.loads((out / "summary.json").read_text()) == []
     assert list((out / "png").iterdir()) == []
@@ -321,19 +338,22 @@ def test_main_caps_the_number_of_embedded_images(roots, monkeypatch):
     )
 
     # Both layers are still rendered to the PDF and to png/; only the comment
-    # is capped, and it says how many it left out.
-    assert len(list((out / "png").iterdir())) == 2
+    # is capped, and it says how many it left out. A shown layer keeps both
+    # pictures: the three-panel view and the separate XOR.
+    assert len(list((out / "png").iterdir())) == 4
     comment = (out / "comment.md").read_text()
-    assert comment.count("IMAGE:") == 1
+    assert comment.count("IMAGE:") == 2
     assert "IMAGE:png/a__TOP__1_0.png" in comment
-    assert "1 further layer image(s)" in comment
+    assert "IMAGE:png/a__TOP__1_0__xor.png" in comment
+    assert "IMAGE:png/a__TOP__2_0" not in comment
+    assert "1 further layer(s)" in comment
 
 
 def test_capped_comment_keeps_the_largest_differences_in_report_order(tmp_path):
     images = [
-        ("a.gds", "TOP", "1/0", "png/one.png", 0.5),
-        ("a.gds", "TOP", "2/0", "png/two.png", 9.0),
-        ("a.gds", "TOP", "3/0", "png/three.png", 4.0),
+        ("a.gds", "TOP", "1/0", "png/one.png", "png/one_xor.png", 0.5),
+        ("a.gds", "TOP", "2/0", "png/two.png", "png/two_xor.png", 9.0),
+        ("a.gds", "TOP", "3/0", "png/three.png", "png/three_xor.png", 4.0),
     ]
     path = tmp_path / "comment.md"
 
@@ -341,15 +361,19 @@ def test_capped_comment_keeps_the_largest_differences_in_report_order(tmp_path):
 
     body = path.read_text()
     # The two largest are kept, and 2/0 still precedes 3/0 as in the table.
+    # Both pictures of a kept layer are posted; both of a dropped layer are not.
     assert "png/one.png" not in body
-    assert body.index("png/two.png") < body.index("png/three.png")
-    assert "The 2 largest differences are shown; 1 further" in body
+    assert "png/one_xor.png" not in body
+    assert body.index("png/two.png") < body.index("png/two_xor.png")
+    assert body.index("png/two_xor.png") < body.index("png/three.png")
+    assert "The 2 largest differences are shown" in body
+    assert "1 further layer(s)" in body
 
 
 def test_write_comment_embeds_every_image_when_uncapped(tmp_path):
     images = [
-        ("a.gds", "TOP", "1/0", "png/a__TOP__1_0.png", 1.0),
-        ("b.gds", "TOP", "2/0", "png/b__TOP__2_0.png", 2.0),
+        ("a.gds", "TOP", "1/0", "png/a__TOP__1_0.png", "png/a__TOP__1_0__xor.png", 1.0),
+        ("b.gds", "TOP", "2/0", "png/b__TOP__2_0.png", "png/b__TOP__2_0__xor.png", 2.0),
     ]
     path = tmp_path / "comment.md"
 
@@ -357,8 +381,10 @@ def test_write_comment_embeds_every_image_when_uncapped(tmp_path):
 
     body = path.read_text()
     assert body.count("<details>") == 2
+    assert body.count("IMAGE:") == 4
     assert "(IMAGE:png/b__TOP__2_0.png)" in body
-    assert "further layer image" not in body
+    assert "(IMAGE:png/b__TOP__2_0__xor.png)" in body
+    assert "further layer" not in body
 
 
 def test_image_name_is_filesystem_safe():
@@ -366,6 +392,93 @@ def test_image_name_is_filesystem_safe():
         gds_xor_report.image_name("tests/gds_ref/cross.gds", "TOP", "WG (1/0)")
         == "tests__gds_ref__cross__TOP__WG__1_0_.png"
     )
+
+
+def _layer_area(layout, cell_name: str, layer: int = 1, datatype: int = 0) -> float:
+    cell = layout.cell(cell_name)
+    region = kdb.Region(cell.begin_shapes_rec(layout.layer(layer, datatype)))
+    return region.area() * layout.dbu**2
+
+
+def test_layer_figures_are_old_new_xor_plus_a_zoomed_xor(roots):
+    old, new, _ = roots
+    write_gds(old / "a.gds", {(1, 0): [(0, 0, 1000, 1000)]})
+    write_gds(new / "a.gds", {(1, 0): [(0, 0, 2000, 1000)]})
+    _, _, plots = compare(old, new)
+    data = plots[("TOP", "1/0")]
+
+    combined = gds_xor_report.build_layer_figure("a.gds", "TOP", "1/0", data)
+    zoomed = gds_xor_report.build_xor_figure("a.gds", "TOP", "1/0", data)
+    try:
+        assert [axis.get_title() for axis in combined.axes] == ["old", "new", "xor"]
+        assert [axis.get_title() for axis in zoomed.axes] == ["xor"]
+        # The three panels share a viewport; the separate XOR is zoomed tighter.
+        combined_span = combined.axes[2].get_xlim()[1] - combined.axes[2].get_xlim()[0]
+        zoomed_span = zoomed.axes[0].get_xlim()[1] - zoomed.axes[0].get_xlim()[0]
+        assert zoomed_span < combined_span
+    finally:
+        gds_xor_report.plt.close(combined)
+        gds_xor_report.plt.close(zoomed)
+
+
+def test_review_gds_scales_an_old_hierarchy_into_the_new_database_unit(roots):
+    """A child cell drawn at a coarser dbu still measures 1 um after merging."""
+    old, new, _ = roots
+
+    coarse = kdb.Layout()
+    coarse.dbu = 0.01
+    child = coarse.create_cell("CHILD")
+    child.shapes(coarse.layer(1, 0)).insert(kdb.Box(0, 0, 100, 100))
+    top = coarse.create_cell("TOP")
+    # 100 dbu at 0.01 um is a 1 um placement offset, which must survive the rescale.
+    top.insert(kdb.CellInstArray(child.cell_index(), kdb.Trans(kdb.Vector(100, 0))))
+    coarse.write(str(old / "a.gds"))
+
+    fine = kdb.Layout()
+    fine.dbu = 0.001
+    fine.create_cell("TOP").shapes(fine.layer(1, 0)).insert(kdb.Box(0, 0, 2000, 1000))
+    fine.write(str(new / "a.gds"))
+
+    _, xor_layout, _ = compare(old, new)
+    dest = old.parent / "review.gds"
+    gds_xor_report.write_review_gds(dest, old / "a.gds", new / "a.gds", xor_layout)
+
+    layout = kdb.Layout()
+    layout.read(str(dest))
+    assert layout.dbu == pytest.approx(0.001)
+    old_cell = layout.cell("TOP_OLD")
+    old_region = kdb.Region(old_cell.begin_shapes_rec(layout.layer(1, 0)))
+    assert old_region.area() * layout.dbu**2 == pytest.approx(1.0)
+    assert old_region.bbox().left * layout.dbu == pytest.approx(1.0)
+    assert _layer_area(layout, "TOP_OLD") == pytest.approx(1.0)
+    assert _layer_area(layout, "TOP_NEW") == pytest.approx(2.0)
+    # The extra 1 um x 1 um on the new side, and nothing removed.
+    assert _layer_area(layout, "TOP_XOR") == pytest.approx(1.0)
+
+
+def test_added_file_omits_the_old_cell_from_the_review_gds(roots, monkeypatch):
+    _old, new, out = roots
+    write_gds(new / "a.gds", {(1, 0): [(0, 0, 1000, 1000)]})
+
+    assert (
+        run(
+            [
+                "--old-root",
+                str(_old),
+                "--new-root",
+                str(new),
+                "--outdir",
+                str(out),
+                "a.gds",
+            ],
+            monkeypatch,
+        )
+        == 0
+    )
+
+    layout = kdb.Layout()
+    layout.read(str(out / "xor" / "a.gds"))
+    assert sorted(cell.name for cell in layout.top_cells()) == ["TOP_NEW", "TOP_XOR"]
 
 
 def test_xor_gds_keeps_shapes_on_their_original_layer(roots):

@@ -10,7 +10,7 @@ Each hook is a self-contained Python script that validates some aspect of a PDK 
 
 | Hook ID | Source | What it checks |
 |---------|--------|---------------|
-| `check-required-files` | `check_required_files.py` | README.md, CHANGELOG.md, LICENSE, Makefile, pyproject.toml, .gitignore, .pre-commit-config.yaml, tests/ directory, test workflow |
+| `check-required-files` | `check_required_files.py` | README.md, CHANGELOG.md, LICENSE, Makefile, pyproject.toml, .gitignore, .pre-commit-config.yaml, tests/ directory, test workflow; auto-creates missing `__init__.py` in `*--sample-projects/*/*/samples/` |
 | `check-pyproject-sections` | `check_pyproject_sections.py` | 11 sub-checks: build-system, project fields, optional deps (dev/docs), ruff config, ruff per-file-ignores, codespell, pytest, package-data, tbump, mypy, towncrier |
 | `check-package-init` | `check_package_init.py` | Top-level `__init__.py` defines `__version__` as string literal and `__all__` for public API |
 | `check-version-sync` | `check_version_sync.py` | Version consistency across pyproject.toml `[project].version`, `[tool.tbump.version].current`, `__init__.py __version__`, and README.md pip install line |
