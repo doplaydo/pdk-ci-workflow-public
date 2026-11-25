@@ -304,6 +304,17 @@ def test_conditional_templates_are_new_sample_project_callers(pdk_root: Path) ->
     assert main() == 0
 
 
+def test_drc_opt_out_does_not_recreate_the_caller(pdk_root: Path) -> None:
+    makefile = pdk_root / "Makefile"
+    existing = makefile.read_text() if makefile.exists() else ""
+    makefile.write_text(existing + "\nDRC_WORKFLOW := 0\n")
+    drc = pdk_root / ".github/workflows/drc.yml"
+    if drc.exists():
+        drc.unlink()
+    main()
+    assert not drc.exists()
+
+
 def test_old_sample_project_callers_are_deprecated(pdk_root: Path) -> None:
     from hooks.check_template_drift import DEPRECATED_TEMPLATES
 

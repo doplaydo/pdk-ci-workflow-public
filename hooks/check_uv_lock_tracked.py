@@ -25,6 +25,11 @@ hand-written gitignore-glob matcher is its own source of false positives
 happens to have a stale `.gitignore` line). Asking git directly whether the
 file is tracked is the actual invariant that determines CI reproducibility,
 and it's unambiguous.
+
+One deliberate exception: a Makefile that sets `UV_LOCK_UNTRACKED := 1`.
+That repo resolves private packages from an organization index derived at
+install time (the index URL contains the organization id). Committing
+`uv.lock` would pin one organization's index and break every other one.
 """
 
 from __future__ import annotations
@@ -37,6 +42,20 @@ from pathlib import Path
 from hooks._utils import CheckResult, is_self_repo
 
 LOCK_FILE = "uv.lock"
+LOCK_OPT_OUT = re.compile(r"^UV_LOCK_UNTRACKED\s*:=", re.MULTILINE)
+
+
+def lock_commit_skipped(makefile_path: Path = Path("Makefile")) -> bool:
+    """True when this repo must not commit a lock file.
+
+    `UV_LOCK_UNTRACKED := 1` means private packages come from an organization
+    index chosen at install time. A lock would record that index's URL.
+    """
+    try:
+        text = makefile_path.read_text()
+    except OSError:
+        return False
+    return LOCK_OPT_OUT.search(text) is not None
 
 
 def _uses_uv(
@@ -95,6 +114,9 @@ def main() -> int:
     result = CheckResult("check-uv-lock-tracked")
 
     if is_self_repo():
+        return result.report()
+
+    if lock_commit_skipped():
         return result.report()
 
     lock_path = Path(LOCK_FILE)

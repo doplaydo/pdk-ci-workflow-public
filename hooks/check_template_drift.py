@@ -10,6 +10,7 @@ Files to enforce are listed in TEMPLATES.
 from __future__ import annotations
 
 import difflib
+import re
 import subprocess
 import sys
 from importlib.resources import files
@@ -35,6 +36,11 @@ TEMPLATES: list[str] = [
     "AGENTS.md",
     "CLAUDE.md",
 ]
+
+# A PDK that sets this in its Makefile does not run the shared DRC workflow.
+# The caller file stays absent instead of being recreated from the template.
+DRC_WORKFLOW = ".github/workflows/drc.yml"
+DRC_OPT_OUT = re.compile(r"^DRC_WORKFLOW\s*:=\s*0\b", re.MULTILINE)
 
 
 # Files previously shipped as templates that are now fetched at runtime by
@@ -87,6 +93,17 @@ def _diff(old: str, new: str, path: str) -> str:
     )
 
 
+def _drc_workflow_skipped() -> bool:
+    """True when this PDK opts out of the DRC caller and does not have one."""
+    if Path(DRC_WORKFLOW).exists():
+        return False
+    try:
+        text = Path("Makefile").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return DRC_OPT_OUT.search(text) is not None
+
+
 def _enforce_template(rel: str, root, result: CheckResult) -> None:
     parts = rel.split("/")
     src = root
@@ -124,6 +141,8 @@ def main() -> int:
     root = files("templates")
 
     for rel in TEMPLATES:
+        if rel == DRC_WORKFLOW and _drc_workflow_skipped():
+            continue
         _enforce_template(rel, root, result)
 
     for rel, glob_pattern in CONDITIONAL_TEMPLATES:
