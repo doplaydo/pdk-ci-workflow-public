@@ -16,6 +16,8 @@ Three kinds of output land in ``--outdir``:
 * ``png/<slug>__<cell>__<layer>.png`` - that same three-panel figure.
 * ``png/<slug>__<cell>__<layer>__xor.png`` - the XOR on its own, zoomed to the
   difference, so a PR comment can show it separately from the three-panel view.
+  Names longer than 200 characters are truncated and suffixed with a hash so
+  long PDK cell names stay under the 255-byte filename limit.
 * ``summary.md`` / ``summary.json`` - the same numbers for a PR comment or a
   downstream job.
 * ``comment.md`` - ``summary.md`` plus one collapsed section per layer holding
@@ -31,6 +33,7 @@ caller decides what a difference means.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 from dataclasses import dataclass, field
@@ -107,6 +110,9 @@ def slugify(relpath: str) -> str:
     return relpath.replace("/", "__").removesuffix(".gds")
 
 
+MAX_IMAGE_STEM = 200  # well under the 255-byte filename limit, leaving room for ".png"
+
+
 def image_name(relpath: str, cell: str, layer: str, kind: str = "") -> str:
     """Filename for one layer's figure: unique per (file, cell, layer).
 
@@ -116,9 +122,20 @@ def image_name(relpath: str, cell: str, layer: str, kind: str = "") -> str:
     if kind:
         parts.append(kind)
     stem = "__".join(
-        "".join(char if char.isalnum() or char in "-_." else "_" for char in part)
+        "".join(
+            char if (char.isascii() and char.isalnum()) or char in "-_." else "_"
+            for char in part
+        )
         for part in parts
     )
+    # The stem is pure ASCII, so its length in characters is its length in bytes.
+    if len(stem) > MAX_IMAGE_STEM:
+        # Filesystems cap a filename at 255 bytes, and a renamed top cell shows
+        # up as "<old>_-_<new>", so long hashed PDK cell names overflow it.
+        # Keep a readable prefix and add a hash of the full stem so names stay
+        # unique per (file, cell, layer, kind).
+        digest = hashlib.sha256(stem.encode()).hexdigest()[:12]
+        stem = f"{stem[: MAX_IMAGE_STEM - len(digest) - 2]}__{digest}"
     return f"{stem}.png"
 
 
