@@ -10,24 +10,94 @@ and cells that require positional arguments are skipped automatically.
 Use ``--skip cell1 cell2 ...`` to skip additional cells by name or
 glob pattern (e.g. ``--skip "TEMPLATE_*"`` skips all cells starting
 with ``TEMPLATE_``).
+
+The cells of all_cells are packed 100 um apart. A PDK whose DRC deck has
+longer-range spacing rules between separate cells (for example a 1000 um
+dicing-channel spacing) can raise this in its pyproject.toml, so the pack
+does not create violations between unrelated cells::
+
+    [tool.pdk-ci-workflow.drc]
+    pack_spacing = 1000
+
+``--spacing`` overrides the setting.
 """
 
 import argparse
 import fnmatch
 import importlib.util
 import inspect
+import math
 import sys
+import tomllib
 from pathlib import Path
 
 from gdsfactoryplus import get_pdk
 
+DEFAULT_PACK_SPACING = 100.0
+
+
+def is_valid_spacing(value: object) -> bool:
+    """Return True for a finite, positive int or float (bool excluded)."""
+    return (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value > 0
+    )
+
+
+def configured_pack_spacing(start: Path) -> float:
+    """Return [tool.pdk-ci-workflow.drc] pack_spacing from the nearest pyproject.toml.
+
+    Falls back to DEFAULT_PACK_SPACING when the nearest pyproject.toml has no
+    such setting. Exits on a value that is not a finite positive number.
+    """
+    for directory in (start, *start.parents):
+        pyproject = directory / "pyproject.toml"
+        if pyproject.is_file():
+            config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            value = (
+                config.get("tool", {})
+                .get("pdk-ci-workflow", {})
+                .get("drc", {})
+                .get("pack_spacing", DEFAULT_PACK_SPACING)
+            )
+            if not is_valid_spacing(value):
+                sys.exit(
+                    f"Error: [tool.pdk-ci-workflow.drc] pack_spacing in {pyproject} "
+                    f"must be a finite positive number, got {value!r}"
+                )
+            return float(value)
+    return DEFAULT_PACK_SPACING
+
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("cell_name", help="Cell to build, or 'all_cells'")
 parser.add_argument("--skip", nargs="*", default=[], help="Cell names to skip when building all_cells")
+parser.add_argument(
+    "--spacing",
+    type=float,
+    default=None,
+    help="Spacing between packed cells for all_cells, in um (default: "
+    "[tool.pdk-ci-workflow.drc] pack_spacing, else 100)",
+)
 args = parser.parse_args()
 
 cell_name = args.cell_name
 skip_cells = set(args.skip)
+
+# Resolve and validate the pack spacing before the slow step of building
+# every cell, so a bad setting fails fast.
+if cell_name == "all_cells":
+    if args.spacing is not None:
+        if not is_valid_spacing(args.spacing):
+            sys.exit(
+                f"Error: --spacing must be a finite positive number, got {args.spacing}"
+            )
+        spacing = args.spacing
+    else:
+        spacing = configured_pack_spacing(Path.cwd())
+
 Path("build/gds").mkdir(parents=True, exist_ok=True)
 pdk = get_pdk()
 
@@ -76,8 +146,11 @@ if cell_name == "all_cells":
         except Exception as e:  # noqa: BLE001
             print(f"Error instantiating cell {name}: {e}")
 
+    if spacing != DEFAULT_PACK_SPACING:
+        print(f"Packing all_cells with spacing {spacing:g} um")
+
     if components:
-        c = gf.pack(components, spacing=100)[0]
+        c = gf.pack(components, spacing=spacing)[0]
         c.name = "all_cells"
     else:
         c = gf.Component("all_cells")

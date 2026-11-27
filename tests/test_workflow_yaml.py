@@ -708,6 +708,19 @@ def test_claude_review_tolerates_refused_api_key() -> None:
     assert "gh pr comment" in gate["run"]
 
 
+
+def test_claude_review_concurrency_ignores_skipped_events() -> None:
+    """Only real review runs may cancel a review in progress.
+
+    Workflow-level concurrency applies before the job's ``if``, so a bot comment
+    or a push would cancel the review started on PR open and then skip itself.
+    """
+    data = _load_yaml(WORKFLOWS_DIR / "claude-pr-review.yml")
+    assert "concurrency" not in data
+    job = data["jobs"]["review"]
+    assert job["concurrency"]["cancel-in-progress"] is True
+    assert "claude-pr-review" in job["concurrency"]["group"]
+
 # ── Coverage from the single test_code run ─────────────────────────
 
 
