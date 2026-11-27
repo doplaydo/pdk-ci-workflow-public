@@ -394,6 +394,30 @@ def test_image_name_is_filesystem_safe():
     )
 
 
+def test_image_name_caps_long_names():
+    old = "die_with_pads_and_edge_couplers_S6200_8700_P250_NNone_NNone_PP100_ETPD150_Ppad_WLTrue_CSni_18be253f"
+    new = old.replace("PP100", "PP110").replace("18be253f", "9ffc5be8")
+    relpath = "tests/test_pdk.gds/gds_ref/die_with_pads_and_edge_couplers.gds"
+    cell = f"{old}_-_{new}"
+    names = {
+        gds_xor_report.image_name(relpath, cell, "725_727"),
+        gds_xor_report.image_name(relpath, cell, "725_727", "xor"),
+        gds_xor_report.image_name(relpath, cell, "726_727"),
+    }
+    assert len(names) == 3
+    for name in names:
+        assert len(name.encode()) <= 255
+        assert name.startswith("tests__test_pdk.gds__gds_ref__die_with_pads")
+        assert name.endswith(".png")
+
+
+def test_image_name_is_ascii_so_cap_holds_in_bytes():
+    cell = "ring_µ_é" * 60
+    name = gds_xor_report.image_name("a.gds", cell, "1_0")
+    assert name.isascii()
+    assert len(name.encode()) <= 255
+
+
 def _layer_area(layout, cell_name: str, layer: int = 1, datatype: int = 0) -> float:
     cell = layout.cell(cell_name)
     region = kdb.Region(cell.begin_shapes_rec(layout.layer(layer, datatype)))
