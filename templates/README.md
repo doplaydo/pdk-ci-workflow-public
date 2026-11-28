@@ -23,6 +23,20 @@ Minimal wrappers — each calls the upstream reusable workflow and forwards secr
 | `.github/workflows/update_badges.yml` | Generate coverage, model, issue, and PR badges after Test code succeeds on `main`, and nightly |
 | `.github/workflows/code-security.yml` | SAST (Semgrep) and SCA (Trivy) security scans |
 
+## DRC of all_cells
+
+`drc.yml` builds every default-instantiable PDK cell into `build/gds/all_cells.gds` with `scripts/build_cell.py all_cells` and checks that one layout. Two optional settings in the PDK repo shape that build:
+
+- **`build_cell_skip.txt`** (anywhere in the repo): cell names or globs to leave out, one per line, `#` comments allowed. Use it for cells that only make sense inside other cells, such as cut-only via cells whose metal comes from the via stacks.
+- **`[tool.pdk-ci-workflow.drc] pack_spacing`** in `pyproject.toml`: distance between the packed cells, in µm. Default 100. Raise it when the DRC deck has spacing rules longer than 100 µm between separate cells. Otherwise the pack itself creates violations between unrelated cells, for example the 1000 µm dicing-channel (DIAM) spacing in the AIM decks:
+
+  ```toml
+  [tool.pdk-ci-workflow.drc]
+  pack_spacing = 1000
+  ```
+
+  More spacing can only remove violations between neighbouring cells. It also makes the layout larger, which can matter for decks with minimum-density rules or a maximum layout size, so only set it where the deck needs it. `build_cell.py --spacing` overrides it for local runs.
+
 
 
 

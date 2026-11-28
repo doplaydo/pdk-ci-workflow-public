@@ -152,3 +152,101 @@ def test_unknown_cell_fails(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "cell 'nope' not found" in result.stderr
+
+
+STUB_GF = textwrap.dedent(
+    """\
+    from pathlib import Path
+
+
+    class Component:
+        def __init__(self, name="all_cells"):
+            self.name = name
+
+        def write_gds(self, path):
+            Path(path).write_text(self.name)
+
+
+    def pack(components, spacing):
+        Path("pack_spacing.txt").write_text(repr(spacing))
+        return [Component()]
+    """
+)
+
+
+def run_all_cells(project: Path, *args: str) -> subprocess.CompletedProcess:
+    stub_gf = project / "_stub_gf" / "gdsfactory"
+    stub_gf.mkdir(parents=True)
+    (stub_gf / "__init__.py").write_text(STUB_GF)
+    stub_dir = make_stub_gfp(project)
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            [str(stub_dir), str(stub_gf.parent), str(project)]
+        ),
+    }
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "all_cells", *args],
+        cwd=project,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+PDK_SECTION = '[tool.gdsfactoryplus.pdk]\nname = "fakepdk"\n'
+
+
+@pytest.mark.parametrize(
+    ("extra", "args", "expected"),
+    [
+        ("", (), 100.0),
+        ("\n[tool.pdk-ci-workflow.drc]\npack_spacing = 1000\n", (), 1000.0),
+        ("\n[tool.pdk-ci-workflow.drc]\npack_spacing = 250.5\n", (), 250.5),
+        (
+            "\n[tool.pdk-ci-workflow.drc]\npack_spacing = 1000\n",
+            ("--spacing", "50"),
+            50.0,
+        ),
+        ('\n[tool.pdk-ci-workflow.release]\ntarget = "none"\n', (), 100.0),
+    ],
+    ids=["default", "configured", "float", "cli-overrides", "other-section"],
+)
+def test_all_cells_pack_spacing(
+    tmp_path: Path, extra: str, args: tuple[str, ...], expected: float
+) -> None:
+    project = make_project(tmp_path, PDK_SECTION + extra)
+
+    result = run_all_cells(project, *args)
+
+    assert result.returncode == 0, result.stderr
+    assert float((project / "pack_spacing.txt").read_text()) == expected
+    assert (project / "build/gds/all_cells.gds").read_text() == "all_cells"
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "true", '"wide"', "inf", "nan"])
+def test_all_cells_rejects_invalid_pack_spacing(tmp_path: Path, value: str) -> None:
+    project = make_project(
+        tmp_path,
+        PDK_SECTION + f"\n[tool.pdk-ci-workflow.drc]\npack_spacing = {value}\n",
+    )
+
+    result = run_all_cells(project)
+
+    assert result.returncode != 0
+    assert "pack_spacing" in result.stderr
+    assert not (project / "pack_spacing.txt").exists()
+    # Fails fast: before the PDK is loaded and its cells are built.
+    assert not (project / "stub_get_pdk_called.txt").exists()
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "inf", "nan"])
+def test_all_cells_rejects_invalid_cli_spacing(tmp_path: Path, value: str) -> None:
+    project = make_project(tmp_path, PDK_SECTION)
+
+    result = run_all_cells(project, "--spacing", value)
+
+    assert result.returncode != 0
+    assert "--spacing" in result.stderr
+    assert not (project / "stub_get_pdk_called.txt").exists()
